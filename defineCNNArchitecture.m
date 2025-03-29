@@ -32,20 +32,29 @@ function layers = defineCNNArchitecture(numClasses, architectureType)
         case 'one-fstride4'
             layers = [
                 imageInputLayer(inputSize)
-                
-                convolution2dLayer([8 8], 186, 'Stride', [1 4], 'Padding', 'same')
+        
+                % Enhanced convolutional layer
+                convolution2dLayer([9 40], 128, 'Stride', [1 4], 'Padding', 'same') % Full frequency coverage
                 batchNormalizationLayer()
                 reluLayer()
-                
+        
+                % Additional conv layer
+                convolution2dLayer([5 1], 128, 'Stride', [1 1], 'Padding', 'same') % Temporal processing
+                batchNormalizationLayer()
+                reluLayer()
+        
+                % Global average pooling
+                globalAveragePooling2dLayer()
+        
+                % Final layers
                 dropoutLayer(0.5)
                 fullyConnectedLayer(256)
                 reluLayer()
-                
                 fullyConnectedLayer(numClasses)
                 softmaxLayer()
                 classificationLayer()
             ];
-            
+
         case 'tpool2'
             layers = [
                 imageInputLayer(inputSize)

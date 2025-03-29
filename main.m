@@ -40,7 +40,7 @@ title('Sample Training Spectrogram');
 colorbar;
 
 %% 3. Model Configuration/Select Architecture
-archType = 'trad-fpool3'; % Options: 'trad-fpool3', 'one-fstride4', 'tpool2'
+archType = 'one-fstride4'; % Options: 'trad-fpool3', 'one-fstride4', 'tpool2'
 disp(['Selected architecture: ', archType]);
 
 % Define CNN architecture
