@@ -53,7 +53,7 @@ function [audioFiles, labels, testingFiles, validationFiles] = loadAudioData()
 end
 
 function lines = readLines(filename)
-    % Read all lines from a text file
+    % Read lines from a text file
     fileID = fopen(filename, 'r');
     if fileID == -1
         error('Could not open file: %s', filename);
@@ -62,6 +62,6 @@ function lines = readLines(filename)
     fclose(fileID);
     lines = lines{1};
 
-    % Remove any whitespaces (shouldnt be an issue but just in case)
+    % Remove whitespaces (shouldnt be an issue but just in case)
     lines = strtrim(lines);
 end
