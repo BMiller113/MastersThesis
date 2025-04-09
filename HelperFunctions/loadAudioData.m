@@ -1,5 +1,5 @@
 function [audioFiles, labels, testingFiles, validationFiles] = loadAudioData()
-    dataPath = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_ GoogleSpeechCommandsV2';
+    dataPath = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_ GoogleSpeechCommandsV2'; %change filepath here if replicating
     % Safetys
     if ~exist(dataPath, 'dir')
         error('Dataset folder not found: %s', dataPath);
@@ -50,6 +50,28 @@ function [audioFiles, labels, testingFiles, validationFiles] = loadAudioData()
     disp(['Training files: ', num2str(length(trainingFiles))]);
     disp(['Testing files: ', num2str(length(testingFiles))]);
     disp(['Validation files: ', num2str(length(validationFiles))]);
+
+    %here here here Noise Augmentation
+    if ~exist('testingFiles', 'var') % Only augment training data
+        augmenter = audioDataAugmenter(...
+            'AddNoiseProbability', 0.7, ... % 70% chance to add noise
+            'SNRRange', [-5, 10], ...
+            'NoiseSources', {'car', 'cafeteria'}, ...
+            'ApplyTimeStretch', false, ...
+            'ApplyPitchShift', false);
+        
+        % Create augmented versions (50% more data)
+        idx = randperm(numel(audioFiles), floor(numel(audioFiles)*0.5));
+        augmentedFiles = audioFiles(idx);
+        
+        % Process augmentation
+        augmentedData = augment(augmenter, augmentedFiles);
+        audioFiles = [audioFiles; augmentedData.Audio];
+        labels = [labels; labels(idx)];
+    end
+
+
+    
 end
 
 function lines = readLines(filename)

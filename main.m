@@ -74,5 +74,35 @@ disp(['False Reject Rate: ', num2str(FR, '%.2f'), '%']);
 disp(['False Alarm Rate: ', num2str(FA, '%.2f'), '%']);
 disp('===================');
 
+
+% %% 5. Evaluation .5555555  cntrl r for mass comment
+% % Final test evaluation
+% disp('=== Test Set Evaluation ===');
+% [testAccuracy, testFR, testFA] = evaluateModel(net, testingFeatures, testingLabels);
+% 
+% % Get final validation accuracy from training history
+% if exist('net', 'var') && isfield(net.Layers(end), 'TrainingHistory')
+%     trainingHistory = net.Layers(end).TrainingHistory;
+%     valInfo = trainingHistory.ValidationAccuracy(end);
+% else
+%     valInfo = NaN; % Handle case where validation accuracy isn't available
+% end
+% 
+% % Compare with validation accuracy
+% disp('=== Final Metrics ===');
+% disp(['Validation Accuracy: ', num2str(valInfo, '%.2f'), '%']);
+% disp(['Test Accuracy:       ', num2str(testAccuracy, '%.2f'), '%']);
+% disp(['Test False Reject:   ', num2str(testFR, '%.2f'), '%']);
+% disp(['Test False Alarm:    ', num2str(testFA, '%.2f'), '%']);
+% 
+% % Save results with timestamps
+% results = struct(...
+%     'ValidationAccuracy', valInfo, ...
+%     'TestAccuracy', testAccuracy, ...
+%     'TestFR', testFR, ...
+%     'TestFA', testFA, ...
+%     'Timestamp', datetime());
+% save('results.mat', 'results');
+
 % Save model
 save('trained_kws_model.mat', 'net', 'archType');
