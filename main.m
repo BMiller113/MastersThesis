@@ -2,7 +2,8 @@
 % using Google Speech Commands V2
 
 %% 1. Load/Prepare Data                                             %% for section break
-[audioFiles, labels, testingFiles, testingLabels] = loadAudioData();
+[audioFiles, labels, testingFiles, testingLabels] = loadAudioData(); %gpt 6/11
+[trainingFiles, labels, testingFiles, testingLabels] = loadAudioData();
 
 % Convert labels to categorical arrays
 labels = categorical(labels);
@@ -21,8 +22,16 @@ disp('=======================');
 
 %% 2. Feature Extraction
 disp('Extracting features...');
-trainingFeatures = extractFeatures(audioFiles);
-testingFeatures = extractFeatures(testingFiles);
+%trainingFeatures = extractFeatures(audioFiles);
+%testingFeatures = extractFeatures(testingFiles);
+[trainingFeatures, trainValidIdx] = extractFeatures(trainingFiles);
+labels = labels(trainValidIdx);
+[testingFeatures, validIdx] = extractFeatures(testingFiles); %6/11 gpt test solution for alignment or somethings
+testingLabels = testingLabels(validIdx);  % Align labels
+
+disp(['testingFiles: ', num2str(length(testingFiles))]);
+disp(['testingFeatures: ', num2str(size(testingFeatures, 4))]);
+disp(['testingLabels: ', num2str(numel(testingLabels))]); %%recent solution
 
 % Feature sanity checks
 disp('=== Feature Validation ===');
@@ -40,7 +49,7 @@ title('Sample Training Spectrogram');
 colorbar;
 
 %% 3. Model Configuration/Select Architecture
-archType = 'one-fstride4'; % Options: 'trad-fpool3', 'one-fstride4', 'tpool2'
+archType = 'trad-fpool3'; % Options: 'trad-fpool3', 'one-fstride4', 'tpool2'
 disp(['Selected architecture: ', archType]);
 
 % Define CNN architecture

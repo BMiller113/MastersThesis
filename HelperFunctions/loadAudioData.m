@@ -1,10 +1,13 @@
-function [audioFiles, labels, testingFiles, validationFiles] = loadAudioData()
-    dataPath = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_ GoogleSpeechCommandsV2'; %change filepath here if replicating
-    % Safetys
+function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudioData()
+    % Define dataset path
+    dataPath = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_ GoogleSpeechCommandsV2';
+
+    % Check if data exists
     if ~exist(dataPath, 'dir')
         error('Dataset folder not found: %s', dataPath);
     end
-    % Load Datasets
+
+    % Load testing and validation file lists
     testingListPath = fullfile(dataPath, 'testing_list.txt');
     validationListPath = fullfile(dataPath, 'validation_list.txt');
 
@@ -18,72 +21,58 @@ function [audioFiles, labels, testingFiles, validationFiles] = loadAudioData()
     testingList = readLines(testingListPath);
     validationList = readLines(validationListPath);
 
-    % Get a list of all .wav files in the dataset
-    audioFiles = dir(fullfile(dataPath, '**/*.wav')); % Recursively search for .wav files
-    audioFiles = fullfile({audioFiles.folder}, {audioFiles.name});
+    % Get all .wav files recursively
+    audioFilesStruct = dir(fullfile(dataPath, '**/*.wav'));
+    audioFiles = fullfile({audioFilesStruct.folder}, {audioFilesStruct.name})';
 
-    % Extract labels from filenames
-    labels = cell(size(audioFiles));
-    isTesting = false(size(audioFiles));
-    isValidation = false(size(audioFiles));
+    % Extract labels and partition info
+    numFiles = numel(audioFiles);
+    labels = cell(numFiles, 1);
+    isTesting = false(numFiles, 1);
+    isValidation = false(numFiles, 1);
 
-    for i = 1:length(audioFiles)
-        [folder, filename, ~] = fileparts(audioFiles{i});
-        [~, label, ~] = fileparts(folder);
+    for i = 1:numFiles
+        [folder, ~, ~] = fileparts(audioFiles{i});
+        [~, label] = fileparts(folder);
         labels{i} = label;
 
-        % Construct the relative path for comparison
-        relativePath = strrep(audioFiles{i}, [dataPath, filesep], ''); % Remove base path
-        relativePath = strrep(relativePath, '\', '/'); % Ensure consistent seperators
+        relativePath = strrep(audioFiles{i}, [dataPath, filesep], '');
+        relativePath = strrep(relativePath, '\', '/'); % standardize separators
 
-        % Check if the file is testing/validation/other(training)
         isTesting(i) = ismember(relativePath, testingList);
         isValidation(i) = ismember(relativePath, validationList);
     end
 
+    % Convert labels to categorical
     labels = categorical(labels);
 
-    % Split into training, testing, and validation sets
+    % Split into sets
     trainingFiles = audioFiles(~isTesting & ~isValidation);
     testingFiles = audioFiles(isTesting);
     validationFiles = audioFiles(isValidation);
+
+    trainingLabels = labels(~isTesting & ~isValidation);
+    testingLabels = labels(isTesting);
+    % validationLabels = labels(isValidation); % optional if needed
+
     disp(['Training files: ', num2str(length(trainingFiles))]);
     disp(['Testing files: ', num2str(length(testingFiles))]);
     disp(['Validation files: ', num2str(length(validationFiles))]);
 
-    %here here here Noise Augmentation
-    if ~exist('testingFiles', 'var') % Only augment training data
-        augmenter = audioDataAugmenter(...
-            'AddNoiseProbability', 0.7, ... % 70% chance to add noise
-            'SNRRange', [-5, 10], ...
-            'NoiseSources', {'car', 'cafeteria'}, ...
-            'ApplyTimeStretch', false, ...
-            'ApplyPitchShift', false);
-        
-        % Create augmented versions (50% more data)
-        idx = randperm(numel(audioFiles), floor(numel(audioFiles)*0.5));
-        augmentedFiles = audioFiles(idx);
-        
-        % Process augmentation
-        augmentedData = augment(augmenter, augmentedFiles);
-        audioFiles = [audioFiles; augmentedData.Audio];
-        labels = [labels; labels(idx)];
-    end
+    % Optional: return validation too by updating output vars
 
-
-    
+    % Placeholder: Optional noise augmentation (disabled here)
+    % if ~exist('testingFiles', 'var')
+    %     ... augmentation logic here ...
+    % end
 end
 
 function lines = readLines(filename)
-    % Read lines from a text file
     fileID = fopen(filename, 'r');
     if fileID == -1
         error('Could not open file: %s', filename);
     end
     lines = textscan(fileID, '%s', 'Delimiter', '\n');
     fclose(fileID);
-    lines = lines{1};
-
-    % Remove whitespaces (shouldnt be an issue but just in case)
-    lines = strtrim(lines);
+    lines = strtrim(lines{1});
 end
