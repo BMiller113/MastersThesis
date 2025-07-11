@@ -1,4 +1,5 @@
-function [features, validIdx] = extractFeatures(audioFiles)
+%function [features, validIdx] = extractFeatures(audioFiles) %pregender
+function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
     % Parameters from paper
     numBands = 40;          % Number of mel bands
     targetFrames = 32;      % Number of time frames
@@ -20,7 +21,34 @@ function [features, validIdx] = extractFeatures(audioFiles)
             overlapLength = round(overlapDuration * fs);
             [s, ~, ~] = spectrogram(audioIn, hamming(frameLength), overlapLength, frameLength, fs);
 
-            melFilterbank = designAuditoryFilterBank(fs, 'NumBands', numBands, 'FFTLength', frameLength);
+            %melFilterbank = designAuditoryFilterBank(fs, 'NumBands', numBands, 'FFTLength', frameLength);
+            if nargin < 3 || strcmp(melMode, 'default')
+                melFilterbank = designAuditoryFilterBank(fs, ...
+                'NumBands', numBands, 'FFTLength', frameLength);
+            elseif strcmp(melMode, 'narrow')
+                if strcmp(genderType, 'male')
+                    melFilterbank = designAuditoryFilterBank(fs, ...
+                        'NumBands', numBands, 'FFTLength', frameLength, ...
+                        'FrequencyRange', [80, 4000]);
+                else
+                    melFilterbank = designAuditoryFilterBank(fs, ...
+                    'NumBands', numBands, 'FFTLength', frameLength, ...
+                    'FrequencyRange', [150, 6000]);
+                end
+            elseif strcmp(melMode, 'wide')
+                if strcmp(genderType, 'male')
+                    melFilterbank = designAuditoryFilterBank(fs, ...
+                        'NumBands', numBands, 'FFTLength', frameLength, ...
+                        'FrequencyRange', [80, 6000]);
+                else
+                    melFilterbank = designAuditoryFilterBank(fs, ...
+                    'NumBands', numBands, 'FFTLength', frameLength, ...
+                    'FrequencyRange', [120, 7000]);
+                end
+            else
+                error('Unknown mel filter mode: %s', melMode);
+            end
+
             melSpectrogram = melFilterbank * abs(s);
 
             logMelSpectrogram = log10(melSpectrogram + eps);

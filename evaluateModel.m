@@ -2,7 +2,7 @@ function [accuracy, FR, FA, rocInfo] = evaluateModel(net, XTest, YTest)
     % Turn off warnings during evaluation
     warning('off', 'all');
 
-    %% Input Validation
+    %% Input validation
     if ~iscategorical(YTest)
         YTest = categorical(YTest);
     end
