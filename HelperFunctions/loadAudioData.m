@@ -1,6 +1,7 @@
 function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudioData()
-    % Define dataset path
-    dataPath = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_ GoogleSpeechCommandsV2';
+    % Load dataset path from config
+    cfg = kws_config();
+    dataPath = cfg.paths.datasetRoot;
 
     % Check if data exists
     if ~exist(dataPath, 'dir')
@@ -8,7 +9,7 @@ function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudi
     end
 
     % Load testing and validation file lists
-    testingListPath = fullfile(dataPath, 'testing_list.txt');
+    testingListPath    = fullfile(dataPath, 'testing_list.txt');
     validationListPath = fullfile(dataPath, 'validation_list.txt');
 
     if ~exist(testingListPath, 'file')
@@ -18,28 +19,30 @@ function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudi
         error('Validation list not found: %s', validationListPath);
     end
 
-    testingList = readLines(testingListPath);
+    testingList    = readLines(testingListPath);
     validationList = readLines(validationListPath);
 
-    % Get all .wav files recursively
-    audioFilesStruct = dir(fullfile(dataPath, '**/*.wav'));
+    % Get all .wav files (recursively)
+    audioFilesStruct = dir(fullfile(dataPath, '**', '*.wav'));
     audioFiles = fullfile({audioFilesStruct.folder}, {audioFilesStruct.name})';
 
-    % Extract labels and partition info
-    numFiles = numel(audioFiles);
-    labels = cell(numFiles, 1);
-    isTesting = false(numFiles, 1);
+    % Extract labels
+    numFiles     = numel(audioFiles);
+    labels       = cell(numFiles, 1);
+    isTesting    = false(numFiles, 1);
     isValidation = false(numFiles, 1);
 
+    dprefix = [dataPath, filesep];
     for i = 1:numFiles
         [folder, ~, ~] = fileparts(audioFiles{i});
         [~, label] = fileparts(folder);
         labels{i} = label;
 
-        relativePath = strrep(audioFiles{i}, [dataPath, filesep], '');
-        relativePath = strrep(relativePath, '\', '/'); % standardize separators
+        % Dataset-relative path (Google Speech Commands Kaggle V2 8/15) using forward slashes 
+        relativePath = strrep(audioFiles{i}, dprefix, '');
+        relativePath = strrep(relativePath, '\', '/');
 
-        isTesting(i) = ismember(relativePath, testingList);
+        isTesting(i)    = ismember(relativePath, testingList);
         isValidation(i) = ismember(relativePath, validationList);
     end
 
@@ -47,32 +50,26 @@ function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudi
     labels = categorical(labels);
 
     % Split into sets
-    trainingFiles = audioFiles(~isTesting & ~isValidation);
-    testingFiles = audioFiles(isTesting);
-    validationFiles = audioFiles(isValidation);
+    trainingMask   = ~isTesting & ~isValidation;
+    trainingFiles  = audioFiles(trainingMask);
+    testingFiles   = audioFiles(isTesting);
+    validationFiles = audioFiles(isValidation); %#ok<NASGU>
 
-    trainingLabels = labels(~isTesting & ~isValidation);
-    testingLabels = labels(isTesting);
-    % validationLabels = labels(isValidation); % optional if needed
+    trainingLabels = labels(trainingMask);
+    testingLabels  = labels(isTesting);
 
-    disp(['Training files: ', num2str(length(trainingFiles))]);
-    disp(['Testing files: ', num2str(length(testingFiles))]);
-    disp(['Validation files: ', num2str(length(validationFiles))]);
+    disp(['Training files: ', num2str(numel(trainingFiles))]);
+    disp(['Testing files: ',  num2str(numel(testingFiles))]);
+    disp(['Validation files: ', num2str(numel(find(isValidation)))]);
 
-    % Optional: return validation too by updating output vars
-
-    % Placeholder: Optional noise augmentation (disabled here)
-    % if ~exist('testingFiles', 'var')
-    %     ... augmentation logic here ...
-    % end
 end
 
 function lines = readLines(filename)
-    fileID = fopen(filename, 'r');
-    if fileID == -1
+    fid = fopen(filename, 'r');
+    if fid == -1
         error('Could not open file: %s', filename);
     end
-    lines = textscan(fileID, '%s', 'Delimiter', '\n');
-    fclose(fileID);
-    lines = strtrim(lines{1});
+    C = textscan(fid, '%s', 'Delimiter', '\n');
+    fclose(fid);
+    lines = strtrim(C{1});
 end
