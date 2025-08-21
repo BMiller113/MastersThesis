@@ -9,7 +9,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
 % Inputs:
 %   audioFiles : cellstr / string / char of .wav paths
 %   genderType : 'male' | 'female' | 'all'      (optional; default 'all')
-%   melMode    : 'default' | 'narrow' | 'wide' | 'prop7k' | 'prop8k'
+%   melMode    : 'default' | 'narrow' | 'wide' | 'prop7k' | 'prop8k' | 'linear'
 %                (optional; default 'default')
 %
 % Outputs:
@@ -52,16 +52,32 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
             end
 
             % Mel config
-            [freqRange, numBands] = chooseMelConfig(fs, genderType, melMode, baseBands);
+            [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMode, baseBands);
 
             % Allocate on first success
             ensureAlloc();
 
-            %  MelSpectrogram
+            %  MelSpectrogram / Linear front-end
             win = localWindow(frameLength); % hamming with 'periodic' when available
             success = false;
 
-            if exist('melSpectrogram','file') == 2
+            % ---- NEW: Linear filter-bank path (uniform frequency spacing) ----
+            if isLinear
+                % STFT
+                if exist('stft','file') == 2
+                    S = stft(audioIn, 'Window', win, ...
+                        'OverlapLength', overlapLength, ...
+                        'FFTLength', frameLength);
+                else
+                    S = spectrogram(audioIn, win, overlapLength, frameLength, fs);
+                end
+                % Triangular linear-spaced filterbank
+                H = linearTriFilterbank(size(S,1), fs, freqRange(1), freqRange(2), numBands);
+                logMel = log10(H * abs(S) + eps);
+                success = true;
+            end
+
+            if ~success && exist('melSpectrogram','file') == 2
                 % A1: modern call (with FrequencyRange)
                 try
                     M = melSpectrogram(audioIn, fs, ...
@@ -177,7 +193,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
 end
 
 % Helper: pick range & bands 
-function [freqRange, numBands] = chooseMelConfig(fs, genderType, melMode, baseBands)
+function [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMode, baseBands)
     nyq  = fs/2;
     safe = @(x) min(max(0, x), nyq*0.999);
 
@@ -188,7 +204,9 @@ function [freqRange, numBands] = chooseMelConfig(fs, genderType, melMode, baseBa
         otherwise,     baseRange = [50, 7000];
     end
     baseRange = [safe(baseRange(1)), safe(baseRange(2))];
-    baseWidth = diff(baseRange);
+    baseWidth = diff(baseRange); %#ok<NASGU>
+
+    isLinear = false;
 
     switch lower(melMode)
         case 'default'
@@ -211,14 +229,25 @@ function [freqRange, numBands] = chooseMelConfig(fs, genderType, melMode, baseBa
         case 'prop7k'
             fr = [baseRange(1), safe(7000)];
             freqRange = fr;
-            ratio    = diff(fr) / baseWidth;
+            ratio    = diff(fr) / diff(baseRange);
             numBands = roundTo8(baseBands * ratio, 24, 160);
 
         case 'prop8k'
             fr = [baseRange(1), safe(8000)];
             freqRange = fr;
-            ratio    = diff(fr) / baseWidth;
+            ratio    = diff(fr) / diff(baseRange);
             numBands = roundTo8(baseBands * ratio, 24, 200);
+
+        % ---- NEW: Linear frequency filter bank (uniform spacing) ----
+        case 'linear'
+            isLinear = true;
+            if strcmpi(genderType,'female')
+                fr = [150, safe(7000)];   % can be [150, 8000] if desired
+            else
+                fr = baseRange;
+            end
+            freqRange = [safe(fr(1)), safe(fr(2))];
+            numBands  = baseBands;        % keep 40; you can scale if you wish
 
         otherwise
             error('Unknown mel filter mode: %s', melMode);
@@ -252,4 +281,37 @@ function [y, fs] = tryRead(path)
         [raw, fs] = audioread(path, 'native');
         y = double(raw) / double(intmax(class(raw)));
     end
+end
+
+% ---- NEW: Linear triangular filterbank helper ----
+function H = linearTriFilterbank(nfftBins, fs, fmin, fmax, numBands)
+    % nfftBins: number of positive-freq STFT bins (rows of S)
+    % fs: sample rate
+    % fmin,fmax: passband (Hz)
+    % numBands: number of triangular bands, linearly spaced
+
+    freqs = linspace(0, fs/2, nfftBins);
+    edges = linspace(max(0,fmin), min(fmax, fs/2*0.999), numBands+2);
+
+    H = zeros(numBands, nfftBins, 'double');
+    for b = 1:numBands
+        f_left   = edges(b);
+        f_center = edges(b+1);
+        f_right  = edges(b+2);
+
+        % Rising slope
+        idx = freqs >= f_left & freqs <= f_center;
+        if any(idx)
+            H(b,idx) = (freqs(idx) - f_left) / max(eps, (f_center - f_left));
+        end
+        % Falling slope
+        idx = freqs >= f_center & freqs <= f_right;
+        if any(idx)
+            H(b,idx) = max(H(b,idx), (f_right - freqs(idx)) / max(eps, (f_right - f_center)));
+        end
+    end
+
+    % Optional: row-normalize so each band sums to ~1
+    s = sum(H,2); s(s==0) = 1;
+    H = H ./ s;
 end

@@ -44,26 +44,41 @@ for g = 1:numel(genderModes)
         case 'none'
             genderList   = intersect({'all'}, runGenders, 'stable');
             useMelFilter = false;
-            melModes     = {'default'};
+            baseMelModes = {'default'};
         case 'filter'
             genderList   = intersect({'male','female'}, runGenders, 'stable');
             useMelFilter = false;
-            melModes     = {'default'};
+            baseMelModes = {'default'};
         case 'filter+mel'
             genderList   = intersect({'male','female'}, runGenders, 'stable');
             useMelFilter = true;
-            melModes     = melModesAll;
+            baseMelModes = melModesAll;
         otherwise
             warning('Unknown genderMode: %s (skipping)', genderMode);
             continue;
     end
 
-    for m = 1:numel(melModes)
-        melMode = melModes{m};
-        if ~useMelFilter && ~strcmpi(melMode,'default'), continue; end
+    % NOTE: loop order changed minimally so we can add female-only "linear" cleanly.
+    for gi = 1:numel(genderList)
+        filterGender = genderList{gi};  % 'all' | 'male' | 'female'
 
-        for gi = 1:numel(genderList)
-            filterGender = genderList{gi};  % 'all' | 'male' | 'female'
+        % Build the actual mode list for this gender.
+        localMelModes = baseMelModes;
+
+        % ---- NEW: Toggleable linear filter-bank (female-only) ----
+        if useMelFilter ...
+                && strcmpi(filterGender,'female') ...
+                && isfield(cfg.experiments,'enableLinearForFemale') ...
+                && cfg.experiments.enableLinearForFemale
+            % Add once; keep order stable; avoid duplicates
+            if ~ismember('linear', localMelModes)
+                localMelModes = [localMelModes, {'linear'}];
+            end
+        end
+
+        for m = 1:numel(localMelModes)
+            melMode = localMelModes{m};
+            if ~useMelFilter && ~strcmpi(melMode,'default'), continue; end
 
             fprintf('\n=== MODE: %s | MEL: %s | GROUP: %s ===\n', ...
                 upper(genderMode), upper(melMode), upper(filterGender));

@@ -18,8 +18,10 @@ cfg.runtime.suppressWarnings = false;   % true for quiet runs
 
 % -------- Experiment targets --------
 cfg.experiments.includeModes = {'none','filter','filter+mel'};     % which high-level modes to run
-cfg.experiments.gendersToRun = {'all','male','female'};            % which groups to include
+cfg.experiments.gendersToRun = {'female'};            % which groups to include   {'all','male','female'};  
 cfg.experiments.melModes     = {'default','narrow','wide','prop7k','prop8k'}; % mel variants, prop7 and prop8 being the proportional increases suggested by Dr. Wang in Late July
+
+cfg.experiments.enableLinearForFemale = false; % true, false. Linear for female as porposed by Dr. Wang Late July
 
 % Force a target class or threshold (leave [] for data-driven)
 cfg.experiments.forcePosLabel = [];    % example: 'yes'
@@ -32,7 +34,7 @@ cfg.features.frameMs       = 25;
 cfg.features.hopMs         = 10;
 
 % -------- Model --------
-cfg.model.arch = 'tpool2';          % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
+cfg.model.arch = 'trad-fpool3';          % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
 
 % -------- Training --------
 cfg.train.epochs       = 50;
