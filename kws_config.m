@@ -48,6 +48,12 @@ cfg.train.valFreq      = 30;
 % -------- Evaluation --------
 cfg.eval.perClassCSV   = true;      % write results_by_class_*.csv if helper exists
 
+% ---- Runtime UI toggles ----
+cfg.runtime.figureVisibility  = 'off';   % 'on' or 'off' default for all figures
+cfg.runtime.showTrainingPlots = false;   % training progress window popup ('training-progress')
+cfg.runtime.makePlots         = false;   % evaluation plots (ROC) in evaluateModel
+cfg.runtime.suppressWarnings  = false;   % suppress per-file extraction warnings
+
 % -------- Profiles --------
 switch lower(profile)
     case 'fast'   % quicker smoke test
@@ -61,13 +67,3 @@ switch lower(profile)
         % default stays as set above
 end
 end
-
-
-%To build gender map run the below:
-%
-% datasetRoot = kws_config().paths.datasetRoot;
-% genderMap = build_speaker_gender_map(datasetRoot);
-% save('speakerGenderMap.mat','genderMap');   % path must match cfg.paths.genderMapFile
-%
-% To begin getting results run main.m after adjusting all configs to suit
-% your setup

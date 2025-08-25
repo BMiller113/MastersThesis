@@ -38,6 +38,11 @@ function net = trainCNN(XTrain, YTrain, layers, cfg)
     initLR      = getfielddef(cfg,'train','initLR',1e-3);
     weightDecay = getfielddef(cfg,'train','weightDecay',1e-3);
 
+    plotsMode = 'none';
+    if isfield(cfg,'runtime') && isfield(cfg.runtime,'showTrainingPlots') && cfg.runtime.showTrainingPlots
+        plotsMode = 'training-progress';
+    end
+
     options = trainingOptions('adam', ...
         'MaxEpochs',           epochs, ...
         'MiniBatchSize',       batchSize, ...
@@ -50,7 +55,7 @@ function net = trainCNN(XTrain, YTrain, layers, cfg)
         'L2Regularization',    weightDecay, ...
         'Shuffle',             'every-epoch', ...
         'Verbose',             false, ...
-        'Plots',               'none');
+        'Plots',               plotsMode); %comes from config
 
     net = trainNetwork(XTrain(:,:,:,~valIdx), YTrain(~valIdx), layers, options);
 end

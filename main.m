@@ -129,12 +129,12 @@ for g = 1:numel(genderModes)
                     MacroFR  = macro.FR;
                     MacroFA  = macro.FA;
                     MacroAUC = macro.AUC;
-                catch ME
+                catch
                     warning('Per-class evaluation failed');
                 end
             end
 
-            % 6) Persist artifacts
+            % 6) Persist artifacts (define tag/outDir BEFORE any file writes)
             tag = sprintf('%s_%s', genderMode, melMode);
             if ~strcmpi(filterGender, 'all')
                 tag = sprintf('%s_%s', tag, filterGender);
@@ -143,6 +143,7 @@ for g = 1:numel(genderModes)
             outDir = cfg.paths.outputDir;
             if ~exist(outDir,'dir'), mkdir(outDir); end
 
+            % Save model and results MAT
             save(fullfile(outDir, ['model_' tag '.mat']), 'net', 'ARCH_TYPE');
 
             results = struct( ...
@@ -161,8 +162,21 @@ for g = 1:numel(genderModes)
 
             save(fullfile(outDir, ['results_' tag '.mat']), 'results', 'rocInfo');
 
+            % Write per-class CSV with renamed headers (FRpercent/FApercent)
             if ~isempty(perClassTbl) && istable(perClassTbl)
-                writetable(perClassTbl, fullfile(outDir, ['results_by_class_' tag '.csv']));
+                perClassForCSV = perClassTbl;  % keep original in memory
+
+                vn = perClassForCSV.Properties.VariableNames;
+                if ismember('FR', vn)
+                    perClassForCSV.FRpercent = perClassForCSV.FR;
+                    perClassForCSV = removevars(perClassForCSV, 'FR');
+                end
+                if ismember('FA', vn)
+                    perClassForCSV.FApercent = perClassForCSV.FA;
+                    perClassForCSV = removevars(perClassForCSV, 'FA');
+                end
+
+                writetable(perClassForCSV, fullfile(outDir, ['results_by_class_' tag '.csv']));
             end
 
             % Console summary
@@ -171,13 +185,14 @@ for g = 1:numel(genderModes)
             if ~isnan(MacroFR)
                 fprintf('Macro (classes): FR=%.2f%% | FA=%.2f%% | AUC=%.3f\n', MacroFR, MacroFA, MacroAUC);
             end
+
         end
     end
 end
 
 % Summarize all runs to CSVs (all + male + female)
 try
-    summarizeResults(true);   % export CSVs (single arg)
+    summarizeResults(true, true);   % export CSVs (single arg), export CSV + ROC (double arg)
 catch ME
     warning('summarizeResults failed');
 end

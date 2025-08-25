@@ -51,7 +51,10 @@ function summarizeResults(exportCSV, makePlots)
         end
     end
 
-    T = table(Mode, GenderMode, MelMode, FilterGender, Accuracy, FR, FA);
+
+    FRpercent = FR;
+    FApercent = FA;
+    T = table(Mode, GenderMode, MelMode, FilterGender, Accuracy, FRpercent, FApercent);
     disp(T);
 
     if exportCSV
@@ -68,11 +71,12 @@ function summarizeResults(exportCSV, makePlots)
     % Bar chart (optional)
     if makePlots && ~isempty(T)
         figure('Visible','on');
-        bar(categorical(T.Mode), [T.Accuracy, T.FR, T.FA]);
+        bar(categorical(T.Mode), [T.Accuracy, T.FRpercent, T.FApercent]);
         ylabel('Percentage');
         legend({'Accuracy','False Reject','False Alarm'});
         title('Performance Comparison by Mode');
-        xtickangle(30); grid on;
+        xtickangle(30); 
+        grid on;
     end
 
     % ROC curves (optional)
@@ -84,6 +88,7 @@ function summarizeResults(exportCSV, makePlots)
             semilogx(rc.far * 3600 / 0.01, rc.frr * 100, 'LineWidth', 2);
         end
         xlabel('False Alarms per Hour'); ylabel('False Reject Rate (%)');
-        title('ROC Curves by Mode'); legend(legendLabels, 'Location','best'); grid on;
+        title('ROC Curves by Mode'); legend(legendLabels, 'Location','best'); 
+        grid on;
     end
 end
