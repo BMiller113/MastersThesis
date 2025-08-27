@@ -17,9 +17,10 @@ cfg.runtime.figureVisibility = 'off';   % 'off' during long runs
 cfg.runtime.suppressWarnings = false;   % true for quiet runs
 
 % -------- Experiment targets --------
-cfg.experiments.includeModes = {'none','filter','filter+mel'};     % which high-level modes to run
+cfg.experiments.includeModes = {'filter','filter+mel'};     % {'none','filter','filter+mel'} which high-level modes to run
 cfg.experiments.gendersToRun = {'female'};            % which groups to include   {'all','male','female'};  
-cfg.experiments.melModes     = {'default','narrow','wide','prop7k','prop8k'}; % mel variants, prop7 and prop8 being the proportional increases suggested by Dr. Wang in Late July
+cfg.experiments.melModes     = {'default','narrow'}; % {'default','narrow','wide','prop7k','prop8k'}
+                                                                              % mel variants, prop7 and prop8 being the proportional increases suggested by Dr. Wang in Late July
 
 cfg.experiments.enableLinearForFemale = false; % true, false. Linear for female as porposed by Dr. Wang Late July
 

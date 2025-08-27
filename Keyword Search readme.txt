@@ -38,6 +38,8 @@ testing_list.txt, validation_list.txt, class subfolders with .wav files
 1) Accuracy: overall multiclass accuracy (%)
 2) AUC: aread under ROC for chosed positve class, threshold-independent
 3) Thr: the score cutoff used, by default EER.
+    Specific thoughts on threshold: ROC/AUC scan a full range away
+    Printed FR and FA percentages do depend on threshold
 4) FR (%): among true positives, percent that system misses Thr
 5) FA (%): among negatives, percent system fires on at Thr
 6) Support: count of examples used in a given metric 

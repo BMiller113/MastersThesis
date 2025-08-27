@@ -29,10 +29,8 @@ function [accuracy, FR, FA, rocInfo, debug] = evaluateModel(net, XTest, YTest, m
     % 1) If YTest has classes the net doesn't know, merge them to a fallback the net does know
     if ~all(ismember(yCats, netClassCell))
         extras = setdiff(yCats, netClassCell);    % present in YTest, absent in net
-        % choose fallback: prefer
-        % '_unknown_'/'_silence_'/'_background_noise_' if available  (!!!)
         pref = intersect({'_unknown_','_silence_','_background_noise_'}, netClassCell, 'stable');
-        if isempty(pref), fallback = netClassCell(1); else, fallback = pref{1}; end
+        if isempty(pref), fallback = netClassCell{1}; else, fallback = pref{1}; end
         YTest = mergecats(YTest, extras, fallback);  % merge all 'extras' into fallback
         YTest = removecats(YTest);
     end
@@ -82,12 +80,21 @@ function [accuracy, FR, FA, rocInfo, debug] = evaluateModel(net, XTest, YTest, m
     % ROC + threshold
     [far, frr, thresholds, AUC] = localROC(YTest, keywordScores, positiveLabel);
 
+    % Choose threshold (fixed if provided, else EER)
     if nargin >= 6 && ~isempty(fixedThreshold)
         thr = fixedThreshold;
+        % for plotting the EER marker sensibly, still find k (nearest to EER)
+        [~, k] = min(abs(far - frr));
     else
         [~, k] = min(abs(far - frr));   % EER threshold
         thr = thresholds(k);
     end
+
+    % Threshold sanity print
+    %q = prctile(keywordScores,[1 5 10 50 90 95 99]);
+    %fprintf('Score quantiles: 1%%=%.3f 5%%=%.3f 10%%=%.3f 50%%=%.3f 90%%=%.3f 95%%=%.3f 99%%=%.3f\n', q);
+    %fprintf('Chosen Thr=%.4f | pos mean=%.3f neg mean=%.3f\n', thr, ...
+        %mean(keywordScores(posMask)), mean(keywordScores(negMask)));
 
     % FR / FA (%)
     predPos = keywordScores >= thr;
@@ -97,7 +104,6 @@ function [accuracy, FR, FA, rocInfo, debug] = evaluateModel(net, XTest, YTest, m
     if makePlots && ~any(isnan(far))
         figure('Visible','on');
         semilogx(far * 3600 / 0.01, frr * 100, 'LineWidth', 2); hold on;
-        [~, k] = min(abs(far - frr));
         plot(far(k) * 3600 / 0.01, frr(k) * 100, 'o','MarkerSize',6,'LineWidth',1.5);
         xlabel('False Alarms per Hour'); ylabel('False Reject Rate (%)');
         title(sprintf('ROC: %s (AUC=%.3f) | thr=%.3f', positiveLabel, AUC, thr));
