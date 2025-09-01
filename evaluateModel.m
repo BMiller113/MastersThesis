@@ -102,16 +102,28 @@ function [accuracy, FR, FA, rocInfo, debug] = evaluateModel(net, XTest, YTest, m
     FA = (sum( predPos & negMask) / max(1,negN)) * 100;
 
     if makePlots && ~any(isnan(far))
+        % Plot FPR% vs FRR% with zoomed axes 8/29
         figure('Visible','on');
-        semilogx(far * 3600 / 0.01, frr * 100, 'LineWidth', 2); hold on;
-        plot(far(k) * 3600 / 0.01, frr(k) * 100, 'o','MarkerSize',6,'LineWidth',1.5);
-        xlabel('False Alarms per Hour'); ylabel('False Reject Rate (%)');
+        plot(far * 100, frr * 100, 'LineWidth', 2); hold on;
+        plot(far(k) * 100, frr(k) * 100, 'o','MarkerSize',6,'LineWidth',1.5);
+        xlabel('False Positive Rate (%)'); ylabel('False Reject Rate (%)');
         title(sprintf('ROC: %s (AUC=%.3f) | thr=%.3f', positiveLabel, AUC, thr));
         grid on;
+
+    % Auto-zoom to the informative corner if AUC is high
+        try
+            x95 = prctile(far*100, 95);
+            y95 = prctile(frr*100, 95);
+            xlim([0, max(1, min(5, x95))]);   % show about 5% 
+            ylim([0, max(5, min(20, y95))]);  % show about 20% by default
+        catch
+            % keep defaults if percent unavailable
+        end
     end
 
     rocInfo = struct('far',far,'frr',frr,'thresholds',thresholds, ...
-                     'AUC',AUC,'positiveLabel',positiveLabel,'thrUsed',thr);
+                 'AUC',AUC,'positiveLabel',positiveLabel,'thrUsed',thr, ...
+                 'mode','utterance');
 
     % Debug
     countsVec = arrayfun(@(c) sum(YTest==c), categorical(netClassCell));
