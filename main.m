@@ -1,7 +1,7 @@
 % main.m  —  Keyword Search with Gender Control (config = kws_config)
-% 8/15/25
+% 9/23
 
-%Load config
+% Load config
 cfg = kws_config();
 
 % Apply runtime UI preference (Training progress popups or no)
@@ -30,12 +30,14 @@ else
            '   save(cfg.paths.genderMapFile, ''genderMap'');'], gmFile);
 end
 
-
 % Experiment grid (from config)
-genderModes = cfg.experiments.includeModes;                 % {'none','filter','filter+mel'}
+genderModes = cfg.experiments.includeModes;                 % {'none','filter','filter+mel','mel-only'}
 melModesAll = cfg.experiments.melModes;                     % {'default','narrow','wide','prop7k','prop8k'}
 runGenders  = cfg.experiments.gendersToRun;                 % {'all','male','female'}
 
+% Ensure output dir exists
+outDir = cfg.paths.outputDir;
+if ~exist(outDir,'dir'), mkdir(outDir); end
 
 % Main main
 for g = 1:numel(genderModes)
@@ -53,6 +55,10 @@ for g = 1:numel(genderModes)
             genderList   = intersect({'male','female'}, runGenders, 'stable');
             useMelFilter = true;
             baseMelModes = melModesAll;
+        case 'mel-only'
+            genderList   = intersect({'all'}, runGenders, 'stable');  % no split
+            useMelFilter = true;                                      % still apply melModes
+            baseMelModes = melModesAll;
         otherwise
             warning('Unknown genderMode: %s (skipping)', genderMode);
             continue;
@@ -65,7 +71,7 @@ for g = 1:numel(genderModes)
         % Build the actual mode list for this gender.
         localMelModes = baseMelModes;
 
-        % ---- NEW: Toggleable linear filter-bank (female-only) ----
+        %  Toggleable linear filter-bank (female-only)
         if useMelFilter ...
                 && strcmpi(filterGender,'female') ...
                 && isfield(cfg.experiments,'enableLinearForFemale') ...
@@ -85,14 +91,30 @@ for g = 1:numel(genderModes)
 
             % 1) Load data ONLY (scope errors to loading)
             try
-                [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
-                    genderMap, filterGender, useMelFilter, melMode);
+                % Prefer new signature with cfg; fall back if older helper version
+                try
+                    [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
+                        genderMap, filterGender, useMelFilter, melMode, cfg);
+                catch
+                    [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
+                        genderMap, filterGender, useMelFilter, melMode);
+                end
             catch ME
                 warning('Data load failed for %s/%s/%s: %s', genderMode, melMode, filterGender, ME.message);
                 continue;
             end
 
-            % 2) Sanity checks (prevent shape/count bugs)-
+            % erive input resolution for logging & dynamic layers
+            % Use cfg.features when present; fallback to 25/10 ms.
+            freqBins   = size(XTrain,1);     % # mel/linear bands (rows)
+            timeFrames = size(XTrain,2);     % # time frames (cols)
+            frameMs    = 25;  if isfield(cfg,'features') && isfield(cfg.features,'frameMs'), frameMs = cfg.features.frameMs; end
+            hopMs      = 10;  if isfield(cfg,'features') && isfield(cfg.features,'hopMs'),  hopMs  = cfg.features.hopMs;  end
+            timeSpanMs = frameMs + (timeFrames - 1) * hopMs;
+            fprintf('CNN input resolution: %d freq-bins × %d frames (~%.0f ms span)\n', ...
+                    freqBins, timeFrames, timeSpanMs);
+
+            % 2) Sanity checks (prevent shape/count bugs)
             assert(size(XTrain,4) == numel(YTrain), ...
                 'XTrain items (%d) != YTrain labels (%d)', size(XTrain,4), numel(YTrain));
             assert(size(XTest,4)  == numel(YTest), ...
@@ -108,12 +130,10 @@ for g = 1:numel(genderModes)
             end
 
             % 3) Define & train (dynamic input size)
-            freqBins  = size(XTrain,1);
-            timeSteps = size(XTrain,2);
-
             layers = defineCNNArchitecture( ...
-                numel(categories(YTrain)), ARCH_TYPE, freqBins, timeSteps);
+                numel(categories(YTrain)), ARCH_TYPE, freqBins, timeFrames);
 
+            % trainCNN honors cfg.runtime.showTrainingPlots internally
             net = trainCNN(XTrain, YTrain, layers, cfg);
 
             % 4) Evaluate
@@ -139,9 +159,6 @@ for g = 1:numel(genderModes)
             if ~strcmpi(filterGender, 'all')
                 tag = sprintf('%s_%s', tag, filterGender);
             end
-
-            outDir = cfg.paths.outputDir;
-            if ~exist(outDir,'dir'), mkdir(outDir); end
 
             % Save model and results MAT
             save(fullfile(outDir, ['model_' tag '.mat']), 'net', 'ARCH_TYPE');
@@ -191,12 +208,16 @@ for g = 1:numel(genderModes)
 end
 
 % Summarize all runs to CSVs (all + male + female)
+origDir = pwd;
 try
-    summarizeResults(true, true);   % export CSVs (single arg), export CSV + ROC (double arg)
+    if ~isempty(outDir) && exist(outDir,'dir')
+        cd(outDir);
+    end
+    summarizeResults(true, cfg.runtime.makePlots);   % export CSVs + ROC/DET plots based on config
 catch ME
-    warning('summarizeResults failed');
+    warning('summarizeResults failed: %s');  % <— add ME.message
 end
+cd(origDir);
 
 % Re-enable figure visibility at the end (optional)
 set(0,'DefaultFigureVisible','on');
-

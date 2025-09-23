@@ -1,15 +1,15 @@
-function layers = defineCNNArchitecture(numClasses, architectureType, freqBins, timeSteps)
+function layers = defineCNNArchitecture(numClasses, architectureType, freqBins, timeFrames)
 % defineCNNArchitecture: build a CNN with variable input size.
 % 
 % Examples:
-% layers = defineCNNArchitecture(numClasses, archType, freqBins, timeSteps)
+% layers = defineCNNArchitecture(numClasses, archType, freqBins, timeFrames)
 % layers = defineCNNArchitecture(numClasses, archType)  % defaults to 40x32
 
     % Defaults for older uses (check to see if still necessary !!! 8/15)
     if nargin < 3 || isempty(freqBins),  freqBins  = 40; end
-    if nargin < 4 || isempty(timeSteps), timeSteps = 32; end
+    if nargin < 4 || isempty(timeFrames), timeFrames = 32; end
 
-    inputSize = [freqBins, timeSteps, 1];
+    inputSize = [freqBins, timeFrames, 1];
 
     switch lower(architectureType)
 
@@ -38,7 +38,8 @@ function layers = defineCNNArchitecture(numClasses, architectureType, freqBins, 
         case 'one-fstride4'
             % First conv spans a wide time window; keep padding same
             kH = 9;
-            kW = min(timeSteps, max(3, round(timeSteps)));
+            % Span the full time dimension (cap at current timeFrames)
+            kW = min(timeFrames, max(3, round(timeFrames)));
             layers = [ ...
                 imageInputLayer(inputSize, "Normalization","none");
 
@@ -82,3 +83,4 @@ function layers = defineCNNArchitecture(numClasses, architectureType, freqBins, 
             error('Unknown architecture type: %s', architectureType);
     end
 end
+

@@ -1,4 +1,4 @@
-function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
+function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode, cfg)
 % extractFeatures
 % Mel-feature extraction with optional gender-specific frequency
 % ranges and proportional band scaling (prop7k/prop8k). Uses melSpectrogram
@@ -16,17 +16,33 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
 %   features : [numBands x targetFrames x 1 x N] (single), z-scored globally
 %   validIdx : logical [1 x N], false for files that failed robustly
 
-    % Defaults (for 1 arg saftey)
+
+    % ---- Arg defaults ----
     if nargin < 2 || isempty(genderType), genderType = 'all';     end
     if nargin < 3 || isempty(melMode),    melMode    = 'default'; end
+    if nargin < 4, cfg = []; end
 
-    % Base settings
-    baseBands       = 40;    % baseline # mel bands (scaled in 'prop*' modes)
-    targetFrames    = 32;    % keep time resolution constant
-    frameDuration   = 0.025; % 25 ms
-    overlapDuration = 0.010; % 10 ms
+    % ---- Base settings (overridable via cfg.features) ----
+    baseBands     = 40;    % baseline # mel bands (scaled in 'prop*' modes)
+    targetFrames  = 32;    % keep time resolution constant
+    frameMs       = 25;    % ms window
+    hopMs         = 10;    % ms hop (NOT overlap)
+    cropMode      = 'center'; % 'center' | 'left' | 'right'
 
-    % Normalize input list
+    if ~isempty(cfg) && isstruct(cfg) && isfield(cfg,'features')
+        f = cfg.features;
+        if isfield(f,'baseBands')    && ~isempty(f.baseBands),    baseBands    = f.baseBands;    end
+        if isfield(f,'targetFrames') && ~isempty(f.targetFrames), targetFrames = f.targetFrames; end
+        if isfield(f,'frameMs')      && ~isempty(f.frameMs),      frameMs      = f.frameMs;      end
+        if isfield(f,'hopMs')        && ~isempty(f.hopMs),        hopMs        = f.hopMs;        end
+        if isfield(f,'cropMode')     && ~isempty(f.cropMode),     cropMode     = f.cropMode;     end
+    end
+
+    % Convert ms -> seconds
+    frameDurSec = frameMs/1000;
+    hopDurSec   = hopMs/1000;
+
+    % -------- Normalize input list --------
     if ischar(audioFiles) || isstring(audioFiles)
         audioFiles = cellstr(audioFiles);
     end
@@ -43,27 +59,29 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
             audioIn = forceMono(audioIn);             % mix to mono if needed
             ma = max(abs(audioIn)); if ma > 0, audioIn = audioIn/ma; end
 
-            frameLength   = max(128, round(frameDuration   * fs));
-            overlapLength = round(overlapDuration * fs);
+            % Frame geometry (use HOP to compute OverlapLength)
+            frameLength   = max(128, round(frameDurSec * fs));
+            hopSamples    = max(1,   round(hopDurSec   * fs));
+            overlapLength = max(0,   frameLength - hopSamples);  % MATLAB expects overlap (not hop)
 
             % Guard: pad to at least one window
             if numel(audioIn) < frameLength
                 audioIn(end+1:frameLength,1) = 0;
             end
 
-            % Mel config
+            % Mel/Filterbank configuration
             [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMode, baseBands);
 
-            % Allocate on first success
+            % Allocate on first success (locks band count within this batch)
             ensureAlloc();
 
-            %  MelSpectrogram / Linear front-end
+            % Front-end: melSpectrogram or custom linear bank
             win = localWindow(frameLength); % hamming with 'periodic' when available
             success = false;
 
-            % ---- NEW: Linear filter-bank path (uniform frequency spacing) ----
+            % Linear filter-bank path (uniform frequency spacing)
             if isLinear
-                % STFT
+                % STFT/SPECTROGRAM (magnitude)
                 if exist('stft','file') == 2
                     S = stft(audioIn, 'Window', win, ...
                         'OverlapLength', overlapLength, ...
@@ -77,6 +95,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
                 success = true;
             end
 
+            % Preferred: melSpectrogram (Audio Toolbox)
             if ~success && exist('melSpectrogram','file') == 2
                 % A1: modern call (with FrequencyRange)
                 try
@@ -129,8 +148,9 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
             if ~success
                 fs2 = 16000;
                 audioIn2 = resample(audioIn, fs2, fs);
-                frameLength2   = max(128, round(frameDuration * fs2));
-                overlapLength2 = round(overlapDuration * fs2);
+                frameLength2   = max(128, round(frameDurSec * fs2));
+                hopSamples2    = max(1,   round(hopDurSec   * fs2));
+                overlapLength2 = max(0,   frameLength2 - hopSamples2);
                 win2 = localWindow(frameLength2);
                 fr2 = [freqRange(1), min(freqRange(2), fs2/2*0.999)];
 
@@ -143,8 +163,8 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
                 success = true;
             end
 
-            % Normalize shape
-            % Expect [numBands x frames]. Fix if transposed
+            % Normalize shape & resize time safely
+            % Expect [numBands x frames]. Auto-fix if transposed.
             [r, c] = size(logMel);
             if r ~= numBands && c == numBands
                 logMel = logMel.'; [r, c] = size(logMel);
@@ -153,23 +173,26 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
                 error('unexpectedMelShape: got %dx%d, expected %dx*', r, c, numBands);
             end
 
-            % Resize without [] concat (shape-safe)
+            % Resize to targetFrames using crop policy
             Z = zeros(numBands, targetFrames, 'like', logMel);
-            if c == 0
-                % keep zeros
-            elseif c <= targetFrames
-                Z(:,1:c) = logMel;
+            if c <= targetFrames
+                Z(:,1:c) = logMel;   % right-pad
             else
-                startCol = floor((c - targetFrames)/2) + 1;
+                switch lower(cropMode)
+                    case 'left',   startCol = 1;
+                    case 'right',  startCol = c - targetFrames + 1;
+                    otherwise      % 'center'
+                        startCol = floor((c - targetFrames)/2) + 1;
+                end
                 Z(:,:) = logMel(:, startCol:startCol + targetFrames - 1);
             end
             logMel = Z;
 
-            % Storage
+            % Store
             features(:, :, 1, i) = single(logMel);
 
         catch ME
-            % Per-file warning
+            % Per-file warning (kept compact)
             warning('extractFeatures:filefail %s | %s', audioFiles{i}, ME.message);
             ensureAlloc();                        % make sure 'features' exists
             features(:, :, 1, i) = 0;             % zero-fill failed item
@@ -182,6 +205,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode)
     sd = std(features(:)) + eps;
     features = (features - mu) / sd;
 
+    % Nested helper
     function ensureAlloc()
         if isempty(features)
             features = zeros(numBands, targetFrames, 1, numFiles, 'single');
@@ -204,7 +228,6 @@ function [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMo
         otherwise,     baseRange = [50, 7000];
     end
     baseRange = [safe(baseRange(1)), safe(baseRange(2))];
-    baseWidth = diff(baseRange); %#ok<NASGU>
 
     isLinear = false;
 
@@ -247,7 +270,7 @@ function [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMo
                 fr = baseRange;
             end
             freqRange = [safe(fr(1)), safe(fr(2))];
-            numBands  = baseBands;        % keep 40; you can scale if you wish
+            numBands  = baseBands;        % keep 40 (or whatever cfg.features.baseBands is)
 
         otherwise
             error('Unknown mel filter mode: %s', melMode);
@@ -283,13 +306,14 @@ function [y, fs] = tryRead(path)
     end
 end
 
-% ---- NEW: Linear triangular filterbank helper ----
+% Linear triangular filterbank helper
 function H = linearTriFilterbank(nfftBins, fs, fmin, fmax, numBands)
     % nfftBins: number of positive-freq STFT bins (rows of S)
     % fs: sample rate
     % fmin,fmax: passband (Hz)
     % numBands: number of triangular bands, linearly spaced
 
+    % Frequency axis for the STFT rows (assumes one-sided spectrum)
     freqs = linspace(0, fs/2, nfftBins);
     edges = linspace(max(0,fmin), min(fmax, fs/2*0.999), numBands+2);
 
@@ -311,7 +335,7 @@ function H = linearTriFilterbank(nfftBins, fs, fmin, fmax, numBands)
         end
     end
 
-    % Optional: row-normalize so each band sums to ~1
+    % Row-normalize so each band sums to ~1
     s = sum(H,2); s(s==0) = 1;
     H = H ./ s;
 end
