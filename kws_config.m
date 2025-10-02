@@ -30,16 +30,33 @@ cfg.experiments.forcePosLabel = [];    % example: 'yes'
 cfg.experiments.fixedThreshold = [];   % example: 0.7
 
 % -------- Features (extractor currently owns these) --------
-cfg.features.baseBands     = 40;   % baseline mel bands (prop modes scale this) %default 40
-cfg.features.targetFrames  = 32;   % time steps kept constant (SET TO 64/98 TO COVER ~1s), was 32 9/8 was 98 9/17 101 9/19
+cfg.features.baseBands     = 80;   % baseline mel bands (prop modes scale this) %default 40
+cfg.features.targetFrames  = 98;   % time steps kept constant (SET TO 64/98 TO COVER ~1s), was 32 9/8 was 98 9/17 101 9/19
 cfg.features.frameMs       = 25;   % analysis window size in ms
 cfg.features.hopMs         = 10;   % desired hop (ms) between frames; actual overlap = frameMs - hopMs (NEW)
-
 % Optional: cropping policy if utterance longer than targetFrames (NEW)
 cfg.features.timeCrop      = 'center';  % 'center' | 'left' | 'right'
 
+% -------- Warden pattern --------
+cfg.warden.enable          = true;      % turn on/off the Warden loader path
+cfg.warden.targetWords     = {'yes','no','up','down','left','right','on','off','stop','go'};
+cfg.warden.unknownPct      = 10;        % % of the *final* set to be _unknown_
+cfg.warden.silencePct      = 10;        % % of the *final* set to be _silence_
+cfg.warden.timeShiftMs     = 100;       % +/- time shift (train only)
+cfg.warden.bgFreq          = 0.8;       % prob to mix background noise (train only)
+cfg.warden.bgVolRange      = [0.0 0.1]; % mix gain (train only)
+
+% Force Warden Setuo
+cfg.features.baseBands     = 40;  % Warden/TF reference uses 40 MFCC / 40 log-mel
+cfg.features.frameMs       = 30;  % window = 30 ms
+cfg.features.hopMs         = 10;  % hop    = 10 ms
+cfg.features.targetFrames  = 98;  % ~ 1 + floor((1000-30)/10) = 98 frames (≈ 1s)
+
+% If any files aren’t 16 kHz force resample during extraction:
+cfg.features.forceSampleRate = 16000;   % optional; extractor can honor this if you add it
+
 % -------- Model --------
-cfg.model.arch = 'one-fstride4';          % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
+cfg.model.arch = 'trad-fpool3';          % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
 
 % -------- Training --------
 cfg.train.epochs       = 50;

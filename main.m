@@ -1,5 +1,5 @@
 % main.m  —  Keyword Search with Gender Control (config = kws_config)
-% 9/23
+% 9/28 - added warden stuff
 
 % Load config
 cfg = kws_config();
@@ -88,21 +88,28 @@ for g = 1:numel(genderModes)
 
             fprintf('\n=== MODE: %s | MEL: %s | GROUP: %s ===\n', ...
                 upper(genderMode), upper(melMode), upper(filterGender));
+            
+
 
             % 1) Load data ONLY (scope errors to loading)
-            try
-                % Prefer new signature with cfg; fall back if older helper version
+        try
+            if isfield(cfg,'warden') && cfg.warden.enable
+                % --- Warden pattern (12-class: 10 keywords + _unknown_ + _silence_) ---
+                [XTrain, YTrain, XTest, YTest] = loadWardenPatternData(cfg);
+            else
                 try
                     [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
-                        genderMap, filterGender, useMelFilter, melMode, cfg);
+                    genderMap, filterGender, useMelFilter, melMode, cfg);
                 catch
                     [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
-                        genderMap, filterGender, useMelFilter, melMode);
+                    genderMap, filterGender, useMelFilter, melMode);
                 end
-            catch ME
-                warning('Data load failed for %s/%s/%s: %s', genderMode, melMode, filterGender, ME.message);
-                continue;
             end
+        catch ME
+            warning('Data load failed for %s/%s/%s: %s', genderMode, melMode, filterGender, ME.message);
+            continue;
+        end
+
 
             % erive input resolution for logging & dynamic layers
             % Use cfg.features when present; fallback to 25/10 ms.
