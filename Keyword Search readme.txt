@@ -32,7 +32,7 @@ testing_list.txt, validation_list.txt, class subfolders with .wav files
 	CNN is training with a stratified holdout split
 	Model is evaluated
 	Results are saved to cfg.paths.outputDIR
-	Finally, summarizeResults(true, true) writes a consolidated results_summary.csv and pops up ROC and Bar 	charts
+	Finally, summarizeResults(true, true) writes a consolidated results_summary.csv and pops up ROC and Bar charts
 
 **C) Metrics:
 1) Accuracy: overall multiclass accuracy (%)
@@ -59,4 +59,19 @@ default / narrow / wide – fixed 40 Mel bands (by default).
 prop7k / prop8k – extend the upper frequency to ~7–8 kHz and increase the number of Mel bands proportionally.
 
 linear – linearly spaced triangular filter bank (female-only toggle). Good to test claims about linear vs Mel for female voices.
+
+F) Sainath Recreation
+    Files:
+    run_sainath_benchmark.m - batch driver, find every model.mat in outDir, builds/loads streaming corpus, evaluates each model, writes CSVs
+    evaluateSainathStyle.m - core metric, given net and streaming corpus, it sweeps thresholds, converts FPR to FA/hour, picks operating point
+    makeStreamingCorpus.m - syntehsizes multi minute streams by mixing test keywords onto background, stores a per stream event table, then benchmark file adds sliding windwos and labels on top
+    plot_sainath_curves.m - read saved curves CSVs and render
+
+    Outputs: sumamry, curves, ops, mats, streams, plots
+
+    How to run:
+    1) train models as usual (see above)
+    2) run Sainath benchmark
+    3) script automatically reads each models input size (HxWxC) and matches feature geometry
+    4) builds streaming cache once, delete Results\Sainath\Streams\streams_*.mat to have it regenerate when changing window/hop/tolerance.
 
