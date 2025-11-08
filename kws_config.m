@@ -47,7 +47,7 @@ cfg.warden.bgFreq          = 0.8;       % prob to mix background noise (train on
 cfg.warden.bgVolRange      = [0.0 0.1]; % mix gain (train only)
 
 % -------- Model --------
-cfg.model.arch = 'trad-fpool3';         % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
+cfg.model.arch = 'one-fstride4';         % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
 
 % -------- Training --------
 cfg.train.epochs       = 50;
@@ -72,17 +72,37 @@ cfg.plots.roc.includeBaseline     = false;
 cfg.plots.roc.includeBaselineFrom = fullfile(pwd,'BaselineResults');
 
 % -------- Sainath Streaming --------
-cfg.streaming.winSpanMs = 1000;   % 1.0 s decision window (matches Sainath-style) %tried 500, 1000
-cfg.streaming.hopWinMs  = 20;     % 20 ms hop (denser windows than 100 ms)  %tried 100, 20
+cfg.streaming.winSpanMs = 500;   % 1.0 s decision window (matches Sainath-style) %tried 500, 1000
+cfg.streaming.hopWinMs  = 10;     % 20 ms hop (denser windows than 100 ms)  %tried 100, 20
 % Label tolerance when aligning detections to ground-truth events
 cfg.sainath.labelTolMs  = 100;    % +/- 100 ms
+% --- add in kws_config() near the streaming block ---
+cfg.streaming.numStreams   = 20;     % was 5
+cfg.streaming.streamLenSec = 180;    % was 60
+cfg.sainath.event.hangoverSec   = 0.25;
+cfg.sainath.event.minSepSec     = 0.75;
+cfg.sainath.event.matchTolMs    = 200;
+cfg.sainath.event.minDetDurSec  = 0.10;
+cfg.sainath.event.smoothWinSec  = 0.05;
+
+
 
 % Threshold grid (dense where our posteriors usually live)
-cfg.sainath.thrGrid     = linspace(0, 0.2, 4001);  % 0 .. 0.2 in 0.00005 steps
+cfg.sainath.thrGrid     = linspace(0,1,801); %linspace(0, 0.2, 4001);  % 0 .. 0.2 in 0.00005 steps
 % Report FR at these FA/h operating points (paper-style)
 cfg.sainath.faTargets   = [0.1 0.5 1 2 5];         % FA/hour targets
 % Optional: bootstrap for CIs (0 to disable)
 cfg.sainath.bootstrapN  = 0;        % set to 200 for thorough runs (slower)
+
+% -------- Sainath 14-phrase target set (NEW) --------
+% Keep lower-case to match stream/event code
+cfg.sainath.targetWords = { ...
+    'yes','no','up','down','left','right', ...   % 6
+    'on','off','stop','go', ...                  % +4 = 10
+    'one','two','three','four'                   % +4 = 14
+};
+% Mirror into warden set so loaders/eval use the exact same 14 (NEW)
+cfg.warden.targetWords = cfg.sainath.targetWords;
 
 % -------- Profiles --------
 switch lower(profile)
@@ -93,6 +113,17 @@ switch lower(profile)
         cfg.experiments.melModes     = {'default','prop7k'};
         cfg.train.epochs    = 10;
         cfg.train.batchSize = 256;
+
+    case 'sainath14'  % (NEW) 40-d log-mel, 25ms/10ms, stack 23L+8R (32 frames), 10 ms decisions
+        % Keep your commentary above intact; just overriding geometry here
+        cfg.features.baseBands     = 40;  % Sainath uses 40 log-mel
+        cfg.features.frameMs       = 25;  % 25 ms window
+        cfg.features.hopMs         = 10;  % 10 ms frame shift
+        cfg.features.targetFrames  = 32;  % 23 left + 1 center + 8 right
+        cfg.streaming.hopWinMs     = 10;  % one decision every frame (maps to FA/hour cleanly)
+        % Make sure the 14-phrase set is in effect
+        cfg.warden.targetWords     = cfg.sainath.targetWords;
+
     otherwise
         % default stays as set above
 end
