@@ -1,46 +1,79 @@
 function run_sainath_window_eval()
-% run_sainath_window_eval
-% 1) ensure quick clean + noisy streams exist
-% 2) evaluate all model_*.mat on clean + noisy
-% 3) plot both on the SAME x-axis
+% Run Sainath-style window FR vs FA/hour evaluation for all models
+% and plot clean/noisy curves.
+%
+% IMPORTANT: This version assumes you have already done:
+%   cd('C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\GenderAnalysis')
+% and that:
+%   streams_long\streams_long_clean.mat
+%   streams_long\streams_long_noisy.mat
+% live under that folder.
 
-    cfg = kws_config('sainath14');
-    resultsDir = cfg.paths.outputDir;
+    fprintf('run_sainath_window_eval: using LONG streams.\n');
 
-    % 1) make sure streams exist
-    sqDir   = fullfile(pwd, 'streams_quick');
-    sqClean = fullfile(sqDir, 'streams_quick_clean.mat');
-    sqNoisy = fullfile(sqDir, 'streams_quick_noisy.mat');
-    if ~exist(sqClean,'file') || ~exist(sqNoisy,'file')
-        make_streams_quick();
+    % Use the CURRENT WORKING DIRECTORY (GenderAnalysis)
+    rootDir = pwd;
+
+    cfg = kws_config('sainath14'); %#ok<NASGU>
+
+    % ----- streams -----
+    streamsDir = fullfile(rootDir, 'streams_long');
+    cleanMat   = fullfile(streamsDir, 'streams_long_clean.mat');
+    noisyMat   = fullfile(streamsDir, 'streams_long_noisy.mat');
+
+    if ~isfile(cleanMat) || ~isfile(noisyMat)
+        error(['streams_long .mat files are missing. Expected:' newline ...
+               '  %s' newline ...
+               '  %s'], cleanMat, noisyMat);
     end
 
-    % 2) find models
-    d = dir(fullfile(resultsDir, 'model_*.mat'));
-    if isempty(d)
-        error('No model_*.mat in %s', resultsDir);
+    fprintf('  CLEAN MAT: %s\n', cleanMat);
+    fprintf('  NOISY MAT: %s\n', noisyMat);
+
+    % ----- models -----
+    % Assumes your model .mat files are under GenderAnalysis\Results
+    modelsDir = fullfile(rootDir, 'Results');
+    modelFiles = { ...
+        fullfile(modelsDir, 'model_mel-only_default.mat'), ...
+        fullfile(modelsDir, 'model_mel-only_narrow.mat'), ...
+        fullfile(modelsDir, 'model_mel-only_prop7k.mat'), ...
+        fullfile(modelsDir, 'model_mel-only_wide.mat'), ...
+        fullfile(modelsDir, 'model_none_default.mat') ...
+    };
+
+    % sanity-check models
+    for i = 1:numel(modelFiles)
+        if ~isfile(modelFiles{i})
+            error('Missing model file: %s', modelFiles{i});
+        end
     end
 
-    % prepare curve dirs
-    cleanCurves = fullfile(resultsDir, 'sainath', 'clean', 'curves');
-    noisyCurves = fullfile(resultsDir, 'sainath', 'noisy', 'curves');
-    if ~exist(cleanCurves,'dir'), mkdir(cleanCurves); end
-    if ~exist(noisyCurves,'dir'), mkdir(noisyCurves); end
-    delete(fullfile(cleanCurves, 'sainath_curve_events_*.csv'));
-    delete(fullfile(noisyCurves, 'sainath_curve_events_*.csv'));
+    % ----- evaluate all models on clean + noisy -----
+    for i = 1:numel(modelFiles)
+        mf = modelFiles{i};
+        mname = get_model_name(mf);
 
-    % 3) run eval
-    for k = 1:numel(d)
-        mf = fullfile(d(k).folder, d(k).name);
-        fprintf('\n=== Evaluating %s (CLEAN) ===\n', d(k).name);
-        evaluate_window_sweep_minimal(mf, sqClean, 'clean', []);
+        fprintf('\n=== Evaluating %s (CLEAN) ===\n', mname);
+        % Your evaluate_window_sweep_minimal should be writing
+        % Results\sainath\clean\curves\sainath_curve_events_transFA100ms_*.csv
+        evaluate_window_sweep_minimal(mf, cleanMat, 'clean', []);
 
-        fprintf('=== Evaluating %s (NOISY) ===\n', d(k).name);
-        evaluate_window_sweep_minimal(mf, sqNoisy, 'noisy', []);
+        fprintf('=== Evaluating %s (NOISY) ===\n', mname);
+        % Likewise for noisy
+        evaluate_window_sweep_minimal(mf, noisyMat, 'noisy', []);
     end
 
-    % 4) plot both, same x-axis
-    fixedX = 2000;  % <-- change to 2,5 here for full sainath
-    plot_window_curves(cleanCurves, 'FR vs FA/h — CLEAN', fixedX);
-    plot_window_curves(noisyCurves, 'FR vs FA/h — NOISY', fixedX);
+    % ----- plot all curves (clean + noisy) -----
+    try
+        plot_window_curves();
+    catch ME
+        warning('plot_window_curves failed: %s', ME.message);
+    end
+
+    fprintf('run_sainath_window_eval: done.\n');
+end
+
+function name = get_model_name(path)
+    [~,bn,~] = fileparts(path);
+    name = bn;
 end

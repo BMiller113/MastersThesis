@@ -1,20 +1,17 @@
 function streams = makeStreamingCorpus(cfg, testFiles, testLabels, outWavDir)
 % makeStreamingCorpus  Build long streaming WAVs + annotations from test clips.
 % Outputs a struct array with fields:
-%   .wavPath    : full path to the saved stream WAV
-%   .fs         : sample rate (16 kHz)
-%   .events     : table with [onset_s, offset_s, label] for inserted keywords
-%   .winTimesMs : [N x 2] start/end (ms) for each sliding decision window
-%   .winLabels  : [N x 1] categorical label per window
-%   .winStartIdx, .winEndIdx : sample indices for each window (fast slicing)
+%   .wavPath   : full path to the saved stream WAV
+%   .fs        : sample rate (16 kHz)
+%   .events    : table with [onset_s, offset_s, label] for inserted keywords
+%   .winTimesMs: [N x 2] start/end (ms) for each sliding decision window  
+%   .winLabels : [N x 1] categorical label per window                    
 %
-% Notes:
-% - Audio is peak-normalized after mixing.
-% - “Noisy” mixing may be controlled by cfg.streaming.noiseSNRdB (e.g., 10).
-%   If set, the background bed is scaled to reach the requested SNR (dB)
-%   relative to the keyword mixture; otherwise cfg.streaming.bgGain is used.
 
-% ---------- Inputs / defaults ----------
+% 10/5 version
+
+
+% ---------- Configs, defaults ----------
 if nargin < 4 || isempty(outWavDir)
     outWavDir = fullfile(pwd,'streams');
 end
@@ -22,36 +19,24 @@ if ~exist(outWavDir,'dir'), mkdir(outWavDir); end
 
 sr = 16000;  % target sample rate
 
-% Streaming controls (cfg.streaming with fallbacks)
-numStreams     = getfield_def(cfg,'streaming','numStreams',        5);
+% Streaming controls
+numStreams     = getfield_def(cfg,'streaming','numStreams',        5);  
 streamLenSec   = getfield_def(cfg,'streaming','streamLenSec',     60);
 kwPerMinute    = getfield_def(cfg,'streaming','keywordsPerMin',   15);   % avg keywords/min
 minGapSec      = getfield_def(cfg,'streaming','minGapSec',       0.25);  % min spacing between events
+bgGain         = getfield_def(cfg,'streaming','bgGain',          0.3);   % 0..1 background level
+kwGain         = getfield_def(cfg,'streaming','kwGain',          0.9);   % pre-normalization keyword gain
 
-% Decision/windowing for labeling (Sainath-style uses 100 ms hop)
-hopWinMs       = getfield_def(cfg,'streaming','hopWinMs',        100);
-% If you're matching Sainath stacking (25 ms + 10 ms * (23+8)), span ≈ 325 ms.
-% We'll honor cfg.streaming.winSpanMs if provided, else derive from features:
-spanFromFeatMs = getfield_def(cfg,'features','frameMs',25) + ...
-                 getfield_def(cfg,'features','hopMs',10) * ...
-                 (getfield_def(cfg,'sainath','leftCtx',23) + getfield_def(cfg,'sainath','rightCtx',8));
-winSpanMs      = getfield_def(cfg,'streaming','winSpanMs', round(spanFromFeatMs));
-labelTolMs     = getfield_def(cfg,'sainath',  'labelTolMs', 100);  % +/- tolerance
+% Decision windowing (what the detector sees per decision)
+hopWinMs       = getfield_def(cfg,'streaming','hopWinMs',        100);   % decisions every 100 ms
+winSpanMs      = getfield_def(cfg,'streaming','winSpanMs',       500);   % each decision sees a 500 ms span
+labelTolMs     = getfield_def(cfg,'sainath','labelTolMs',        100);   % allow +/- tolerance around events
 
-% Mixing controls
-bgGain         = getfield_def(cfg,'streaming','bgGain',          0.3);   % used if noiseSNRdB is empty
-noiseSNRdB     = getfield_def(cfg,'streaming','noiseSNRdB',      []);    % set (e.g. 10) to force SNR mixing
-
-% Keyword gain (pre-normalization)
-kwGain         = getfield_def(cfg,'streaming','kwGain',          0.9);
-
-% Target keyword list: prefer cfg.sainath.targetWords, else infer from labels
-if isfield(cfg,'sainath') && isfield(cfg.sainath,'targetWords') && ~isempty(cfg.sainath.targetWords)
-    targetWords = string(lower(cfg.sainath.targetWords(:)'));
-elseif isfield(cfg,'warden') && isfield(cfg.warden,'targetWords') && ~isempty(cfg.warden.targetWords)
-    targetWords = string(lower(cfg.warden.targetWords(:)'));
+% Target keyword list: use cfg.warden.targetWords if present; otherwise infer
+if isfield(cfg,'warden') && isfield(cfg.warden,'targetWords') && ~isempty(cfg.warden.targetWords)
+    targetWords = string(cfg.warden.targetWords(:)');
 else
-    cats = string(lower(categories(testLabels)));
+    cats = string(categories(testLabels));
     targetWords = cats(~startsWith(cats,"_"));  % drop _unknown_, _silence_ if present
 end
 
@@ -73,17 +58,19 @@ end
 
 % ---------- Build streams ----------
 streams = repmat(struct('wavPath','','fs',sr,'events',table(), ...
-                        'winTimesMs',[],'winLabels',categorical(), ...
-                        'winStartIdx',[],'winEndIdx',[]), numStreams,1);
+                        'winTimesMs',[],'winLabels',categorical()), numStreams,1);
 
 for s = 1:numStreams
     L = round(streamLenSec * sr);
+    y = zeros(L,1,'single');
 
-    % We'll accumulate keywords into y_kw (signal), then mix in noise bed "n"
-    y_kw = zeros(L,1,'single');
+    % Background bed
+    if ~isempty(noiseList)
+        y = y + bgGain * stitchBackground(noiseList, L, sr);
+    end
 
     % Insert keyword events with approximate Poisson rate
-    expGapSec = 60 / max(1,kwPerMinute);        % mean inter-arrival
+    expGapSec = 60 / max(1,kwPerMinute);        
     t = 0;
     events = [];  % [onsetSample offsetSample stringLabel]
     rng(1234 + s); % reproducible per stream
@@ -103,9 +90,10 @@ for s = 1:numStreams
         f   = pickRandomFile(label2files, lab);
         if isempty(f), continue; end
 
-        % Read/cook keyword audio
+        % Read keyword audio
         x = readWavMono(f, sr);
         if isempty(x), continue; end
+        % Light random trim of leading/trailing silence (optional)
         x = trimZeros(x);
 
         % Mix in at onset (with simple bounds check)
@@ -115,37 +103,21 @@ for s = 1:numStreams
         end
         if len <= 10, continue; end
 
-        seg = kwGain * x(1:len);
-        y_kw(onset:onset+len-1) = y_kw(onset:onset+len-1) + seg;
+        seg = x(1:len);
+        % Scale keyword relative to bed
+        seg = kwGain * seg;
 
-        % Record event (lower-case to match class list)
+        % Add into stream (accumulate)
+        y(onset:onset+len-1) = y(onset:onset+len-1) + seg;
+
+        % Record event (keep label in lower-case to match class list)
         events = [events; onset onset+len-1 string(lower(lab))]; %#ok<AGROW>
 
         % Respect minimum gap after event
         t = (onset+len-1)/sr + minGapSec;
     end
 
-    % --- Build an unscaled background bed "n" of the same length ---
-    n = zeros(L,1,'single');
-    if ~isempty(noiseList)
-        n = stitchBackground(noiseList, L, sr);
-    end
-
-    % --- Mixing: SNR-controlled if noiseSNRdB is set; else simple gain ---
-    if ~isempty(noiseSNRdB) && isfinite(noiseSNRdB)
-        rSig  = sqrt(mean(y_kw.^2) + 1e-12);
-        rNoi  = sqrt(mean(n.^2) + 1e-12);
-        if rNoi > 0 && rSig > 0
-            alpha = rSig / (10^(noiseSNRdB/20) * rNoi);
-            y = y_kw + alpha * n;
-        else
-            y = y_kw;  % degenerate case
-        end
-    else
-        y = y_kw + bgGain * n;
-    end
-
-    % Peak normalize to avoid audiowrite "clipped" warnings
+    % Peak normalize, matlab avoid audiowrite "clipped" warnings
     peak = max(1e-6, max(abs(y)));
     y = (0.95/peak) * y;
 
@@ -164,7 +136,8 @@ for s = 1:numStreams
                   'VariableNames',{'onset_s','offset_s','label'});
     end
 
-    % ---------- Sliding decision windows + labels ----------
+    % ---------- aquire sliding decision windows + labels ----------
+    % 10/5 version
     Tms = streamLenSec*1000;
     halfWin = winSpanMs/2;
     centers = (halfWin):hopWinMs:(Tms-halfWin);
@@ -175,19 +148,21 @@ for s = 1:numStreams
     ends   = centers + halfWin;
     winTimesMs = [starts(:) ends(:)];
 
-    % Label each window: keyword label if any event overlaps (with tol), else '_neg_'
+    % Label each window: if it overlaps any event (with tolerance), assign that keyword.
+    % If multiple overlap, pick the one with max overlap; else '_neg_'.
     winLabels = strings(numel(centers),1);
     if ~isempty(E)
         evOn = 1000*E.onset_s;   % ms
         evOff= 1000*E.offset_s;  % ms
-        evLab= string(lower(E.label));
+        evLab= string(E.label);
         for w = 1:numel(centers)
             a = starts(w) - labelTolMs;
             b = ends(w)   + labelTolMs;
-            ov = max(0, min(b, evOff) - max(a, evOn));  % ms overlap
+            % overlap test: max(0, min(b,evOff)-max(a,evOn))
+            ov = max(0, min(b, evOff) - max(a, evOn));
             if any(ov > 0)
                 [~,k] = max(ov);
-                winLabels(w) = evLab(k);
+                winLabels(w) = lower(evLab(k));
             else
                 winLabels(w) = "_neg_";
             end
@@ -197,19 +172,16 @@ for s = 1:numStreams
     end
 
     % Pack stream
-    streams(s).wavPath    = outPath;
-    streams(s).fs         = sr;
-    streams(s).events     = E;
-    streams(s).winTimesMs = winTimesMs;
-    streams(s).winLabels  = categorical(winLabels);
-
-    % Also cache sample indices for fast feature slicing
-    streams(s).winStartIdx = max(1, round((starts(:)/1000) * sr));
-    streams(s).winEndIdx   = max(streams(s).winStartIdx, round((ends(:)/1000) * sr));
+    streams(s).wavPath   = outPath;
+    streams(s).fs        = sr;
+    streams(s).events    = E;
+    streams(s).winTimesMs= winTimesMs;
+    streams(s).winLabels = categorical(winLabels);
 end
 end
 
-% ----------------- helpers --------------------
+% -----------------helpers--------------------
+
 function v = getfield_def(cfg, group, name, def)
     v = def;
     if ~isstruct(cfg), return; end
@@ -225,15 +197,15 @@ function [map, labels] = indexByLabel(files, labelsCat)
     labels = categories(labelsCat);
     map = containers.Map('KeyType','char','ValueType','any');
     for i = 1:numel(files)
-        lab = char(lower(string(labelsCat(i))));
+        lab = char(labelsCat(i));
         if ~isKey(map, lab), map(lab) = {}; end
-        map(lab) = [map(lab); files{i}]; 
+        map(lab) = [map(lab); files{i}];
     end
 end
 
 function f = pickRandomFile(map, lab)
     f = '';
-    k = char(lower(string(lab)));
+    k = char(lab);
     if ~isKey(map,k), return; end
     L = map(k);
     if isempty(L), return; end
@@ -241,9 +213,9 @@ function f = pickRandomFile(map, lab)
 end
 
 function lab = chooseKeyword(targetWords, labelsPresent)
-    % pick from intersection of desired targets and labels
-    ts = intersect(string(lower(targetWords)), string(lower(labelsPresent)), 'stable');
-    if isempty(ts), ts = string(lower(labelsPresent)); end
+    % pick from intersection of desired targets and labels we actually have
+    ts = intersect(string(targetWords), string(labelsPresent), 'stable');
+    if isempty(ts), ts = labelsPresent; end
     lab = ts(randi(numel(ts)));
 end
 
@@ -268,6 +240,7 @@ function x = readWavMono(f, sr)
         [x, fs] = audioread(f);
         if size(x,2) > 1, x = mean(x,2); end
         if fs ~= sr, x = resample(x, sr, fs); end
+        % hard clip safety (should be rare with good sources)
         x = max(-1,min(1,x));
         x = single(x);
     catch
@@ -276,7 +249,7 @@ function x = readWavMono(f, sr)
 end
 
 function y = trimZeros(x)
-    % trim of leading/trailing near-zeros
+    % trim leading/trailing 0s, could maybe be improved
     x = double(x);
     thr = 0.002;
     nz = find(abs(x) > thr, 1, 'first');

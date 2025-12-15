@@ -1,75 +1,54 @@
 function streams = addStreamingWindows(streams, cfg)
-% Add sliding-window definitions and labels to each stream (PRE-HANGOVER):
-%   .winTimesMs : [N x 2] [start_ms end_ms] for each decision window
-%   .winLabels  : [N x 1] categorical (keyword label if overlaps, else '_neg_')
-
+% Add sliding-window definitions and labels to each stream:
+%   .winTimesMs : [N x 2] [start_ms end_ms] for each window
+%   .winLabels  : [N x 1] categorical
     if nargin < 2, cfg = struct(); end
+    spanMs = getfield_def(cfg,'streaming','winSpanMs', 500);
+    hopMs  = getfield_def(cfg,'streaming','hopWinMs',  100);
+    tolMs  = getfield_def(cfg,'sainath','labelTolMs',  100);
 
-    % --- Geometry: Sainath (25 ms window, 10 ms hop, 23L+1+8R = 32 frames) ---
-    frameMs = getf(cfg,'features','frameMs', 25);
-    hopMs   = getf(cfg,'features','hopMs',   10);
-    L       = getf(cfg,'sainath','leftCtx',  23);
-    R       = getf(cfg,'sainath','rightCtx', 8);
-
-    % Decision window span ≈ width of the stacked context (pre-hangover code)
-    % For 25/10 & 23L+8R this is 25 + 31*10 = 335 ms
-    spanMs  = getf(cfg,'streaming','winSpanMs', frameMs + hopMs*(L+R));
-    hopWin  = getf(cfg,'streaming','hopWinMs', 10);   % decision every 10 ms (critical!)
-    tolMs   = getf(cfg,'sainath','labelTolMs', 200);  % generous tol to guarantee positives
-
-    % Target keyword set (lowercase)
-    targets = string([]);
-    if isfield(cfg,'sainath') && isfield(cfg.sainath,'targetWords') && ~isempty(cfg.sainath.targetWords)
-        targets = lower(string(cfg.sainath.targetWords(:)'));
-    elseif isfield(cfg,'warden') && isfield(cfg.warden,'targetWords') && ~isempty(cfg.warden.targetWords)
+    % target words
+    targets = {};
+    if isfield(cfg,'warden') && isfield(cfg.warden,'targetWords') && ~isempty(cfg.warden.targetWords)
         targets = lower(string(cfg.warden.targetWords(:)'));
     end
-    targets = targets(:);
 
     for s = 1:numel(streams)
-        assert(isfield(streams(s),'wavPath') && isfield(streams(s),'events'), ...
-               'Stream %d missing wavPath/events', s);
-
-        info = audioinfo(streams(s).wavPath);
-        Tms  = round(info.Duration * 1000);
-
-        if Tms <= 0
-            streams(s).winTimesMs = [0 spanMs];
-            streams(s).winLabels  = categorical("_neg_");
-            continue;
+        if ~isfield(streams(s),'wavPath') || ~isfield(streams(s),'events')
+            error('Stream %d missing wavPath / events.', s);
         end
+        info = audioinfo(streams(s).wavPath);
+        Tms  = info.Duration * 1000;  % stream length in ms
 
-        % Decision window centers, evenly spaced by hopWin
-        halfWin = spanMs/2;
-        centers = halfWin:hopWin:max(halfWin, Tms - halfWin);
-        if isempty(centers), centers = halfWin; end
-
-        starts = centers - halfWin;
-        ends   = centers + halfWin;
+        % Build sliding windows
+        starts = 0:hopMs:max(0, Tms - spanMs);
+        ends   = starts + spanMs;
         winTimesMs = [starts(:) ends(:)];
 
-        % Label by overlap (with tolerance padding)
-        labs = strings(numel(centers),1);
+        % Label each window: keyword label if any event overlaps, else '_neg_'
+        labs = strings(numel(starts),1);
         E = streams(s).events;
         if ~isempty(E)
-            evOn = 1000*E.onset_s(:)  - tolMs;
-            evOff= 1000*E.offset_s(:) + tolMs;
-            evOn  = max(evOn, 0);
-            evOff = max(evOff, evOn);
+            % prepare event intervals with tolerance in ms
+            eStart = E.onset_s * 1000 - tolMs;
+            eEnd   = E.offset_s * 1000 + tolMs;
+            eLab   = lower(string(E.label));
+            eStart = max(eStart, 0);
+            eEnd   = max(eEnd, eStart);
 
-            evLab = lower(string(E.label(:)));
-            for i = 1:numel(centers)
+            for i = 1:numel(starts)
                 a = starts(i); b = ends(i);
-                ov = (evOn < b) & (evOff > a);
+                % find overlap
+                ov = (eStart < b) & (eEnd > a);
                 if any(ov)
                     if ~isempty(targets)
-                        % prefer a target word if any overlaps
-                        idx = find(ov & ismember(evLab, targets), 1, 'first');
+                        % pick the first event whose label is in targets; else fall back to the first overlap
+                        idx = find(ov & ismember(eLab, targets), 1, 'first');
                         if isempty(idx), idx = find(ov,1,'first'); end
                     else
                         idx = find(ov,1,'first');
                     end
-                    labs(i) = evLab(idx);
+                    labs(i) = eLab(idx);
                 else
                     labs(i) = "_neg_";
                 end
@@ -78,15 +57,17 @@ function streams = addStreamingWindows(streams, cfg)
             labs(:) = "_neg_";
         end
 
+        % Commit into stream
         streams(s).winTimesMs = winTimesMs;
         streams(s).winLabels  = categorical(labs);
     end
 end
 
-% ---- local getter ----
-function v = getf(S, group, name, def)
+function v = getfield_def(S, group, name, def)
     v = def;
-    if ~isstruct(S) || ~isfield(S, group), return; end
-    G = S.(group);
-    if isfield(G, name) && ~isempty(G.(name)), v = G.(name); end
+    if ~isstruct(S), return; end
+    if isfield(S, group)
+        g = S.(group);
+        if isfield(g, name) && ~isempty(g.(name)), v = g.(name); end
+    end
 end

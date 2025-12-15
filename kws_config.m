@@ -29,13 +29,14 @@ cfg.experiments.fixedThreshold = [];   % example: 0.7
 
 % -------- Features (extractor currently owns these) --------
 cfg.features.baseBands     = 40;   % Warden/TF reference uses 40 MFCC / 40 log-mel (was 80 during 1s experiments)
-cfg.features.targetFrames  = 98;   % ~ 1 + floor((1000-30)/10) = 98 frames (≈ 1s); was 32 earlier
+cfg.features.targetFrames  = 32;   % ~ 1 + floor((1000-30)/10) = 98 frames (≈ 1s); was 32 earlier
 cfg.features.frameMs       = 30;   % analysis window size in ms (TF ref ~30ms)
-cfg.features.hopMs         = 10;   % desired hop (ms) between frames; actual overlap = frameMs - hopMs (NEW)
-% Optional: cropping policy if utterance longer than targetFrames (NEW)
+cfg.features.hopMs         = 10;   % desired hop (ms) between frames; actual overlap = frameMs - hopMs
+
+% Cropping policy if utterance longer than targetFrames
 cfg.features.timeCrop      = 'center';  % 'center' | 'left' | 'right'
 % If any files aren’t 16 kHz force resample during extraction:
-cfg.features.forceSampleRate = 16000;   % optional; extractor can honor this if you add it
+cfg.features.forceSampleRate = 16000;  % optional
 
 % -------- Warden pattern --------
 cfg.warden.enable          = true;      % turn on/off the Warden loader path
@@ -47,7 +48,7 @@ cfg.warden.bgFreq          = 0.8;       % prob to mix background noise (train on
 cfg.warden.bgVolRange      = [0.0 0.1]; % mix gain (train only)
 
 % -------- Model --------
-cfg.model.arch = 'one-fstride4';         % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
+cfg.model.arch = 'trad-fpool3';         % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
 
 % -------- Training --------
 cfg.train.epochs       = 50;
@@ -70,6 +71,14 @@ cfg.plots.roc.addDET = true;           % also show DET
 % (Optional) Include a separate baseline folder to overlay on plots (NEW)
 cfg.plots.roc.includeBaseline     = false;
 cfg.plots.roc.includeBaselineFrom = fullfile(pwd,'BaselineResults');
+
+
+
+
+
+
+
+
 
 % -------- Sainath Streaming --------
 cfg.streaming.winSpanMs = 500;   % 1.0 s decision window (matches Sainath-style) %tried 500, 1000

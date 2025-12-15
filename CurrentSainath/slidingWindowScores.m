@@ -1,156 +1,164 @@
 function S = slidingWindowScores(net, wavPath, cfg)
-% slidingWindowScores (auto-matching)
-% Builds stacks that MATCH the network's input geometry automatically.
-% Works for nets expecting [B x W x 1], e.g., [48 x 32 x 1] or [40 x 32 x 1].
-%
+% slidingWindowScores  Run your utterance CNN on sliding windows of a stream.
 % Returns:
-%   S.scores   [Nwin x C]
-%   S.t_center [Nwin x 1] (sec)
-%   S.classes  {1xC}
+%   S.sr          : sample rate used (16 kHz)
+%   S.t_center    : [Nwin x 1] time (s) at center of each window
+%   S.winSpanSec  : window duration in seconds
+%   S.scores      : [Nwin x C] softmax scores (same class order as net)
+%   S.classNames  : {1xC} class names (cellstr)
+%
+% Implementation matches your training front-end:
+% - Uses cfg.features.frameMs/hopMs/baseBands/targetFrames
+% - Default windowMs ≈ frameMs + (targetFrames-1)*hopMs  (i.e., the same
+%   receptive field used at train time), but can be overridden via cfg.streaming.windowMs
+% - Hop between windows via cfg.streaming.hopWinMs (default 100 ms)
 
-% ----- 1) Infer input geometry from the net -----
-inSz = [];
-try
-    inSz = net.Layers(1).InputSize;
-catch
-    try, inSz = net.InputSize; end
-end
-assert(~isempty(inSz) && numel(inSz) >= 2, ...
-    'Could not read net input size; expected [bands x frames x channels].');
+% ---------- Network classes/order ----------
+classNames = getNetClasses(net);
 
-bandsNet = inSz(1);      % e.g., 48 (or 40)
-framesNet = inSz(2);     % e.g., 32
-chNet = (numel(inSz) >= 3) * inSz(min(3,numel(inSz)));  % tolerate 2-D specs
-if chNet == 0, chNet = 1; end
-assert(chNet == 1, 'Expected single-channel input; got %d.', chNet);
-
-% ----- 2) Map Sainath stacking to this width -----
-% Target frames = left + 1 + right. Keep rightCtx<=8 if possible; fill left.
-rightCtxDefault = 8;
-if isfield(cfg,'sainath') && isfield(cfg.sainath,'rightCtx') && ~isempty(cfg.sainath.rightCtx)
-    rightCtxDefault = cfg.sainath.rightCtx;
-end
-rightCtx = min(rightCtxDefault, max(0, framesNet-1));   % cap to width-1
-leftCtx  = max(0, framesNet-1 - rightCtx);
-
-% Persist back to cfg so downstream code is consistent
-try
-    cfg.sainath.rightCtx = rightCtx;
-    cfg.sainath.leftCtx  = leftCtx;
-catch, end
-
-% Frame/hop
-frameMs = getf(cfg,'features','frameMs', 25);
-hopMs   = getf(cfg,'features','hopMs',   10);
-
-% ----- 3) Load audio -----
+% ---------- Audio load ----------
+sr = 16000;
 [x, fs] = audioread(wavPath);
 if size(x,2) > 1, x = mean(x,2); end
-if fs ~= 16000, x = resample(x,16000,fs); fs = 16000; end
+if fs ~= sr, x = resample(x, sr, fs); end
 x = single(max(-1,min(1,x)));
 
-% ----- 4) Full log-mel at the REQUIRED # bands -----
-[Mlog, t_ms] = fullLogMelMatrix(x, fs, bandsNet, frameMs, hopMs);
+L = numel(x);
 
-% ----- 5) Build decision centers to fill the stream with overlapping windows -----
-Tms = t_ms(end) + frameMs/2;
-spanMs  = frameMs + hopMs*(leftCtx + rightCtx);
-halfWin = spanMs/2;
-hopWin  = getf(cfg,'streaming','hopWinMs', hopMs);
-centers = (halfWin):hopWin:(Tms - halfWin);
-if isempty(centers), centers = halfWin; end
-Nw = numel(centers);
+% ---------- Front-end geometry from cfg.features ----------
+frameMs     = getf(cfg,'features','frameMs', 25);
+hopMs       = getf(cfg,'features','hopMs',   10);
+baseBands   = getf(cfg,'features','baseBands',   40);
+targetFrames= getf(cfg,'features','targetFrames',32);
 
-% Map each center to the nearest frame index
-idxFrames = round((centers(:) - t_ms(1)) / hopMs) + 1;
-idxFrames = max(1, min(idxFrames, size(Mlog,2)));
+frameLen    = max(128, round(sr * frameMs/1000));
+hopSamp     = max(1,   round(sr * hopMs /1000));
+overlapLen  = max(0, frameLen - hopSamp);
 
-% ----- 6) Stack [bandsNet x framesNet x 1 x Nw] with edge padding -----
-X4 = zeros(bandsNet, framesNet, 1, Nw, 'single');
-for j = 1:Nw
-    c = idxFrames(j);
-    left  = max(1, c - leftCtx);
-    right = min(size(Mlog,2), c + rightCtx);
+% Default window length to match training receptive field; allow override
+defaultWinMs = frameMs + (targetFrames-1)*hopMs;
+windowMs  = getf(cfg,'streaming','windowMs', defaultWinMs);
+hopWinMs  = getf(cfg,'streaming','hopWinMs', 100);   % 10 Hz default
+winLen    = round(sr * windowMs/1000);
+hopWin    = max(1, round(sr * hopWinMs/1000));
 
-    block = Mlog(:, left:right);
-    % pad to framesNet (edge-repeat)
-    curW = size(block,2);
-    if curW < framesNet
-        need = framesNet - curW;
-        padLeft  = max(0, leftCtx  - (c-left));
-        padRight = need - padLeft;
-        if padLeft > 0,  block = [repmat(Mlog(:,left),  1, padLeft),  block]; end
-        if padRight > 0, block = [block, repmat(Mlog(:,right), 1, padRight)]; end
-    end
-    X4(:,:,1,j) = block(:,1:framesNet);
+% time centers
+tCenters = ((0:hopWin:(L-winLen)) + winLen/2) / sr;
+Nwin = numel(tCenters);
+if Nwin==0
+    S = struct('sr',sr,'t_center',[], 'winSpanSec',windowMs/1000, ...
+               'scores',[], 'classNames',{classNames});
+    return;
 end
 
-% Z-score per stream (simple)
-mu = mean(X4(:)); sd = std(X4(:)) + eps;
-X4z = (X4 - mu) / sd;
+% ---------- Feature & batch assembly ----------
+% Frequency range like your 'default' ALL setting
+fr = chooseDefaultFreqRange(sr);
+win = localHamming(frameLen);
+X = zeros(baseBands, targetFrames, 1, Nwin, 'single');
 
-% ----- 7) Predict -----
-scores = predict(net, X4z);   % [Nw x C]
-% Ensure probabilities (softmax) if needed
-if ~isempty(scores)
-    rowSums = sum(scores,2,'omitnan');
-    if any(~isfinite(rowSums)) || median(abs(rowSums - 1)) > 1e-3
-        mx = max(scores, [], 2);
-        ex = exp(scores - mx);
-        scores = ex ./ max(eps, sum(ex,2));
+for i = 1:Nwin
+    a = (i-1)*hopWin + 1;
+    b = a + winLen - 1;
+    seg = x(a:b);
+
+    % mel-spectrogram (prefer AT; fallback to STFT+AFB)
+    logMel = computeLogMel(seg, sr, win, overlapLen, baseBands, fr);
+
+    % shape normalize to [baseBands x targetFrames]
+    [r,c] = size(logMel);
+    if r ~= baseBands && c == baseBands
+        logMel = logMel.'; [r,c] = size(logMel);
     end
+    if r ~= baseBands
+        error('slidingWindowScores: unexpected mel shape %dx%d (expected %dx*)', r, c, baseBands);
+    end
+
+    Z = zeros(baseBands, targetFrames, 'single');
+    if c <= targetFrames
+        Z(:,1:c) = logMel;
+    else
+        startCol = floor((c - targetFrames)/2) + 1;
+        Z(:,:) = logMel(:, startCol:startCol+targetFrames-1);
+    end
+
+    X(:,:,1,i) = Z;
 end
 
-% ----- 8) Finalize -----
+% Global z-score (match extractFeatures behavior)
+mu = mean(X(:)); sd = std(X(:)) + eps;
+X = (X - mu) / sd;
+
+% ---------- Inference ----------
+scores = predict(net, X);      % [Nwin x C]
+
 S = struct();
-S.scores    = scores;
-S.t_center  = centers(:)/1000;
-S.classes   = tryGetClasses(net);
+S.sr         = sr;
+S.t_center   = tCenters(:);
+S.winSpanSec = windowMs/1000;
+S.scores     = scores;
+S.classNames = classNames;
 end
 
-% ===== helpers =====
-function [Mlog, t_ms] = fullLogMelMatrix(x, fs, numBands, frameMs, hopMs)
-frameLen = round(fs * frameMs/1000);
-hopSamp  = max(1, round(fs * hopMs /1000));
-ovl      = max(0, frameLen - hopSamp);
-win      = localHamming(frameLen);
-
-if exist('melSpectrogram','file') == 2
+% ----------------- local helpers -----------------
+function classNames = getNetClasses(net)
+    classNames = {};
     try
-        M = melSpectrogram(x, fs, 'Window',win, 'OverlapLength',ovl, ...
-                           'NumBands', numBands, 'FrequencyRange',[50 min(7000,fs/2*0.999)]);
-        Mlog = log10(M + eps);
+        classNames = cellstr(string(net.Layers(end).Classes));
     catch
-        M = melSpectrogram(x, fs, 'Window',win, 'OverlapLength',ovl, 'NumBands', numBands);
-        Mlog = log10(M + eps);
+        if isprop(net,'Classes')
+            classNames = cellstr(string(net.Classes));
+        end
     end
-else
-    S = spectrogram(x, win, ovl, numel(win), fs);
-    fb = designAuditoryFilterBank(fs, 'NumBands',numBands, 'FFTLength',numel(win), ...
-                                  'FrequencyRange',[50 min(7000,fs/2*0.999)]);
-    Mlog = log10(fb * abs(S) + eps);
+    classNames = strtrim(classNames);
 end
 
-nF = size(Mlog,2);
-t_centers = ((0:nF-1) * hopSamp + frameLen/2) / fs;  % seconds
-t_ms = t_centers(:) * 1000;
+function fr = chooseDefaultFreqRange(sr)
+    nyq = sr/2;
+    fr = [50, min(7000, nyq*0.999)];   % your ALL/default baseline
 end
 
 function w = localHamming(N)
-try, w = hamming(N,'periodic'); catch, w = hamming(N); end
+    try
+        w = hamming(N,'periodic');
+    catch
+        w = hamming(N);
+    end
+end
+
+function Mlog = computeLogMel(x, sr, win, overlapLen, numBands, fr)
+    Mlog = [];
+    if exist('melSpectrogram','file') == 2
+        try
+            M = melSpectrogram(x, sr, 'Window',win, 'OverlapLength',overlapLen, ...
+                               'NumBands', numBands, 'FrequencyRange', fr);
+            Mlog = log10(M + eps);
+            return;
+        catch
+            try
+                M = melSpectrogram(x, sr, 'Window',win, 'OverlapLength',overlapLen, ...
+                                   'NumBands', numBands);
+                Mlog = log10(M + eps);
+                return;
+            catch
+            end
+        end
+    end
+    % Fallback: STFT + Auditory FB
+    if exist('designAuditoryFilterBank','file') ~= 2
+        error('Audio Toolbox function "designAuditoryFilterBank" not found.');
+    end
+    S = spectrogram(x, win, overlapLen, numel(win), sr);
+    fb = designAuditoryFilterBank(sr, 'NumBands',numBands, 'FFTLength',numel(win), ...
+                                  'FrequencyRange', fr);
+    Mlog = log10(fb * abs(S) + eps);
 end
 
 function v = getf(cfg, group, name, def)
-v = def;
-if ~isstruct(cfg), return; end
-if isfield(cfg, group)
-    g = cfg.(group);
-    if isfield(g, name) && ~isempty(g.(name)), v = g.(name); end
-end
-end
-
-function cls = tryGetClasses(net)
-    try, cls = cellstr(string(net.Layers(end).Classes));
-    catch,   cls = {'unknown'};
+    v = def;
+    if ~isstruct(cfg), return; end
+    if isfield(cfg, group)
+        g = cfg.(group);
+        if isfield(g, name) && ~isempty(g.(name)), v = g.(name); end
     end
 end
