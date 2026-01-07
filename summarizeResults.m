@@ -1,9 +1,6 @@
 function summarizeResults(exportCSV, makePlots, searchDir)
 % summarizeResults
 % Scans results_*.mat, builds a summary table, optionally writes CSVs,
-% and (optionally) draws comparison plots. Robust to empty/missing files.
-%
-% Usage:
 %   summarizeResults()                      % no CSV, no plots, current folder
 %   summarizeResults(true, true)            % CSV + plots, current folder
 %   summarizeResults(true, false, 'Results')% CSV only, specific folder
@@ -64,7 +61,7 @@ function summarizeResults(exportCSV, makePlots, searchDir)
         end
     end
 
-    % Rename headers to FRpercent/FApercent for CSV readability
+    % Rename headers
     FRpercent = FR;
     FApercent = FA;
     T = table(Mode, GenderMode, MelMode, FilterGender, Accuracy, FRpercent, FApercent);
@@ -112,9 +109,9 @@ function summarizeResults(exportCSV, makePlots, searchDir)
             for i = 1:numel(rocCurves)
                 rc = rocCurves{i};
                 if isempty(rc.far) || isempty(rc.frr), continue; end
-                % Default rendering: FPR% vs FRR% (safer when we can’t assume frame-rate)
-                x = rc.far * 100;     % FPR -> %
-                y = rc.frr * 100;     % FRR -> %
+                % Default rendering: FPR% vs FRR% 
+                x = rc.far * 100;     
+                y = rc.frr * 100;  
                 plot(x, y, 'LineWidth', 2);
                 plotted = true;
             end

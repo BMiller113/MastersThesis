@@ -1,117 +1,95 @@
-% ============================== main.m ==============================
-% Keyword Search (Pre-Warden) — trains/evaluates using the original
-% gender-split pipeline only. No Warden code is referenced or called.
-% This version FORCES ROC figure pop-ups and saves PNG+FIG per run.
+clear; clc;
 
-% 1) Load config and hard-disable any Warden usage (even if cfg has it)
 cfg = kws_config();
-if isfield(cfg,'warden'), cfg.warden.enable = false; end
 
-% ---- FORCE FIGURES/ROC PLOTS ON (overrides cfg) ----
-cfg.runtime.figureVisibility = 'on';
-cfg.runtime.makePlots        = true;
+% Choose which dataset to run
+datasetsToRun = {'v1'};   % {'v1'} {'v2'} or {'v1','v2'}
 
-% 2) Apply runtime UI preferences (now 'on' so windows pop up)
-if isfield(cfg.runtime,'figureVisibility')
+% Enforce pooled-only modes so nothing tries to use speaker metadata
+cfg.experiments.includeModes = intersect(cfg.experiments.includeModes, {'none','mel-only'}, 'stable');
+cfg.experiments.gendersToRun = {'all'};
+
+% Figure visibility
+if isfield(cfg,'runtime') && isfield(cfg.runtime,'figureVisibility') && ~isempty(cfg.runtime.figureVisibility)
     set(0,'DefaultFigureVisible', cfg.runtime.figureVisibility);
 else
     set(0,'DefaultFigureVisible','on');
 end
-if isfield(cfg.runtime,'suppressWarnings') && cfg.runtime.suppressWarnings
-    warning('off','extractFeatures:filefail');
-    warning('off','backtrace');
-end
 
-MAKE_PLOTS      = true; % <-- force ROC plotting
-FORCE_POS_LABEL = cfg.experiments.forcePosLabel;
-FIXED_THRESHOLD = cfg.experiments.fixedThreshold;
-ARCH_TYPE       = cfg.model.arch;
+ensureDir(cfg.paths.outputDir);
+ensureDir(cfg.paths.modelDir);
+ensureDir(cfg.paths.metricsDir);
+ensureDir(cfg.paths.cacheDir);
 
-% 3) Load speaker→gender map (same as before)
-gmFile = cfg.paths.genderMapFile;
-if exist(gmFile,'file')
-    S = load(gmFile, 'genderMap');
-    genderMap = S.genderMap;
-else
-    error(['%s not found.\n' ...
-           'Create it once with:\n' ...
-           '   genderMap = build_speaker_gender_map(cfg.paths.datasetRoot);\n' ...
-           '   save(cfg.paths.genderMapFile, ''genderMap'');'], gmFile);
-end
+genderModes = cfg.experiments.includeModes;
+melModesAll = cfg.experiments.melModes;
 
-% 4) Experiment grid (NO WARDEN MODES)
-genderModes = cfg.experiments.includeModes;                 % {'none','filter','filter+mel','mel-only'}
-melModesAll = cfg.experiments.melModes;                     % {'default','narrow','wide','prop7k','prop8k'}
-runGenders  = cfg.experiments.gendersToRun;                 % {'all','male','female'}
+overlayCurves = {};
+overlayLabels = {};
 
-% 5) Ensure output directory
-outDir = cfg.paths.outputDir;
-if ~exist(outDir,'dir'), mkdir(outDir); end
+ARCH = cfg.model.arch;
 
-% 6) Main loops (modes × gender × melMode)
-for g = 1:numel(genderModes)
-    genderMode = genderModes{g};
-    switch genderMode
-        case 'none'
-            genderList   = intersect({'all'}, runGenders, 'stable');
-            useMelFilter = false;
-            baseMelModes = {'default'};
-        case 'filter'
-            genderList   = intersect({'male','female'}, runGenders, 'stable');
-            useMelFilter = false;
-            baseMelModes = {'default'};
-        case 'filter+mel'
-            genderList   = intersect({'male','female'}, runGenders, 'stable');
-            useMelFilter = true;
-            baseMelModes = melModesAll;
-        case 'mel-only'
-            genderList   = intersect({'all'}, runGenders, 'stable');   % no split
-            useMelFilter = true;
-            baseMelModes = melModesAll;
-        otherwise
-            warning('Unknown genderMode: %s (skipping)', genderMode);
-            continue;
-    end
+for dsi = 1:numel(datasetsToRun)
+    cfg.dataset.version = lower(string(datasetsToRun{dsi}));
 
-    for gi = 1:numel(genderList)
-        filterGender = genderList{gi};  % 'all' | 'male' | 'female'
+    for g = 1:numel(genderModes)
+        mode = lower(string(genderModes{g}));
 
-        % Allow optional "linear" bank for female only, if enabled
-        localMelModes = baseMelModes;
-        if useMelFilter ...
-                && strcmpi(filterGender,'female') ...
-                && isfield(cfg.experiments,'enableLinearForFemale') ...
-                && cfg.experiments.enableLinearForFemale
-            if ~ismember('linear', localMelModes)
-                localMelModes = [localMelModes, {'linear'}];
-            end
+        switch mode
+            case "none"
+                useMelFilter  = false;
+                localMelModes = {'default'};
+
+            case "mel-only"
+                useMelFilter  = true;
+                localMelModes = melModesAll;
+
+            otherwise
+                warning('Skipping unsupported pooled-only mode: %s', mode);
+                continue;
         end
 
         for m = 1:numel(localMelModes)
-            melMode = localMelModes{m};
-            if ~useMelFilter && ~strcmpi(melMode,'default'), continue; end
+            melMode = lower(string(localMelModes{m}));
+            if ~useMelFilter && melMode ~= "default", continue; end
 
-            fprintf('\n=== MODE: %s | MEL: %s | GROUP: %s ===\n', ...
-                upper(genderMode), upper(melMode), upper(filterGender));
+            fprintf('\n=== %s | MEL=%s | GROUP=ALL | DS=%s ===\n', ...
+                upper(mode), upper(melMode), upper(cfg.dataset.version));
 
-            % -------- Data load (pre-Warden path only) --------
+            % ------------------ Load file lists for this dataset ------------------
             try
-                [XTrain, YTrain, XTest, YTest] = buildFeaturesForMode( ...
-                    genderMap, filterGender, useMelFilter, melMode, cfg);
+                [trainFiles, trainLabels, testFiles, testLabels] = loadAudioData(cfg);
             catch ME
-                warning('Data load failed for %s/%s/%s: %s', ...
-                    genderMode, melMode, filterGender, ME.message);
+                warning('Data load failed for %s/%s/all/%s: %s', ...
+                    mode, melMode, cfg.dataset.version, ME.message);
                 continue;
             end
 
-            % -------- Sanity + geometry log --------
-            assert(size(XTrain,4) == numel(YTrain), ...
-                'XTrain items (%d) != YTrain labels (%d)', size(XTrain,4), numel(YTrain));
-            assert(size(XTest,4)  == numel(YTest), ...
-                'XTest items (%d) != YTest labels (%d)', size(XTest,4), numel(YTest));
-            assert(ndims(XTrain)==4 && ndims(XTest)==4, 'Features must be 4-D arrays.');
-            assert(size(XTrain,3)==1 && size(XTest,3)==1, 'Expected 1 channel (H x W x 1 x N).');
+            fprintf('[%s] Train=%d Test=%d\n', upper(cfg.dataset.version), numel(trainFiles), numel(testFiles));
 
+            % ------------------ Extract features ------------------
+            try
+                if useMelFilter
+                    [XTrain, vTr] = extractFeatures(trainFiles, 'all', char(melMode), cfg);
+                    [XTest,  vTe] = extractFeatures(testFiles,  'all', char(melMode), cfg);
+                else
+                    [XTrain, vTr] = extractFeatures(trainFiles, 'all', 'default', cfg);
+                    [XTest,  vTe] = extractFeatures(testFiles,  'all', 'default', cfg);
+                end
+            catch ME
+                warning('Feature extraction failed (%s/%s/%s): %s', mode, melMode, cfg.dataset.version, ME.message);
+                continue;
+            end
+
+            YTrain = trainLabels(vTr);
+            YTest  = testLabels(vTe);
+
+            if numel(categories(YTrain)) < 2 || numel(categories(YTest)) < 2
+                warning('Not enough classes after filtering/validity. Skipping.');
+                continue;
+            end
+
+            % ------------------ Geometry ------------------
             freqBins   = size(XTrain,1);
             timeFrames = size(XTrain,2);
             frameMs    = getf(cfg,'features','frameMs',25);
@@ -119,159 +97,98 @@ for g = 1:numel(genderModes)
             timeSpanMs = frameMs + (timeFrames - 1)*hopMs;
             fprintf('CNN input: %d×%d×1 (~%.0f ms span)\n', freqBins, timeFrames, timeSpanMs);
 
-            if numel(categories(YTrain)) < 2 || numel(categories(YTest)) < 2
-                warning('Not enough classes to train/eval (train=%d, test=%d) — skipping.', ...
-                    numel(categories(YTrain)), numel(categories(YTest)));
+            % ------------------ Build / Train / Cache model ------------------
+            layers = defineCNNArchitecture(numel(categories(YTrain)), ARCH, freqBins, timeFrames);
+
+            tag = sprintf('%s_%s_all', mode, melMode);
+            runKey = makeRunKey(cfg, ARCH, tag, freqBins, timeFrames);
+
+            try
+                [net, modelPath] = getOrTrainModel(tag, XTrain, YTrain, layers, cfg); %#ok<ASGLU>
+            catch
+                % If you don't have getOrTrainModel in this branch, fall back to training directly
+                net = trainCNN(XTrain, YTrain, layers, cfg);
+                modelPath = '';
+            end
+
+            % ------------------ Evaluate ------------------
+            try
+                [metrics, rocInfo] = evaluateModel( ...
+                    net, XTest, YTest, false, cfg.experiments.forcePosLabel, cfg.experiments.fixedThreshold, cfg);
+            catch ME
+                warning('Evaluation failed (%s): %s', runKey, ME.message);
                 continue;
             end
 
-            % -------- Define network from geometry --------
-            layers = defineCNNArchitecture( ...
-                numel(categories(YTrain)), ARCH_TYPE, freqBins, timeFrames);
-
-            % -------- Train (uses GPU if available; see trainCNN.m) --------
-            net = trainCNN(XTrain, YTrain, layers, cfg);
-
-            % -------- Evaluate --------
-            [accuracy, FR, FA, rocInfo, dbg] = evaluateModel( ...
-                net, XTest, YTest, true, FORCE_POS_LABEL, FIXED_THRESHOLD); %#ok<ASGLU>
-            %                     ^^^^ MAKE_PLOTS forced true here
-
-            % -------- Persist artifacts --------
-            tag = sprintf('%s_%s', genderMode, melMode);
-            if ~strcmpi(filterGender, 'all')
-                tag = sprintf('%s_%s', tag, filterGender);
-            end
-
-            save(fullfile(outDir, ['model_' tag '.mat']), 'net', 'ARCH_TYPE');
-
-            % Optional per-class breakdown
-            perClassTbl = [];
-            MacroFR = NaN; MacroFA = NaN; MacroAUC = NaN;
-            if exist('evaluateAllClasses.m','file')
+            % ------------------ Save per-run ROC (pop + disk) ------------------
+            if isfield(cfg,'plots') && isfield(cfg.plots,'roc') && cfg.plots.roc.popUpAtEnd
                 try
-                    [perClassTbl, macro] = evaluateAllClasses(net, XTest, YTest, false);
-                    MacroFR  = macro.FR;  MacroFA  = macro.FA;  MacroAUC = macro.AUC;
-                catch
-                    warning('Per-class evaluation failed');
+                    plotAndSaveROC(rocInfo, runKey, cfg);
+                catch ME
+                    warning('plotAndSaveROC failed: %s', ME.message);
                 end
             end
 
-            results = struct( ...
-                'GenderMode',    genderMode, ...
-                'MelMode',       melMode, ...
-                'FilterGender',  filterGender, ...
-                'Accuracy',      accuracy, ...
-                'FR',            FR, ...
-                'FA',            FA, ...
-                'MacroFR',       MacroFR, ...
-                'MacroFA',       MacroFA, ...
-                'MacroAUC',      MacroAUC, ...
-                'PositiveLabel', rocInfo.positiveLabel, ...
-                'ThresholdUsed', rocInfo.thrUsed, ...
-                'Timestamp',     datetime());
+            % ------------------ Collect for overlay ------------------
+            if isstruct(rocInfo) && isfield(rocInfo,'far') && isfield(rocInfo,'frr') && ~isempty(rocInfo.far)
+                overlayCurves{end+1} = rocInfo; %#ok<SAGROW>
+                overlayLabels{end+1} = sprintf('%s | %s | %s', ...
+                    upper(mode), upper(melMode), upper(cfg.dataset.version)); %#ok<SAGROW>
+            end
 
-            save(fullfile(outDir, ['results_' tag '.mat']), 'results', 'rocInfo');
-
-            if ~isempty(perClassTbl) && istable(perClassTbl)
-                perClassForCSV = perClassTbl;
-                vn = perClassForCSV.Properties.VariableNames;
-                if ismember('FR', vn)
-                    perClassForCSV.FRpercent = perClassForCSV.FR;
-                    perClassForCSV = removevars(perClassForCSV, 'FR');
+            % ------------------ Export run artifacts if helper exists ------------------
+            if exist('exportRunArtifacts','file') == 2
+                try
+                    cost = [];
+                    if exist('estimateCnnCost','file') == 2
+                        cost = estimateCnnCost(layers, [freqBins timeFrames 1]);
+                    end
+                    exportRunArtifacts(cfg, runKey, metrics, rocInfo, cost, modelPath);
+                catch ME
+                    warning('exportRunArtifacts failed: %s', ME.message);
                 end
-                if ismember('FA', vn)
-                    perClassForCSV.FApercent = perClassForCSV.FA;
-                    perClassForCSV = removevars(perClassForCSV, 'FA');
-                end
-                writetable(perClassForCSV, fullfile(outDir, ['results_by_class_' tag '.csv']));
+            else
+                % Minimal save if you don't have exportRunArtifacts in this branch
+                outDir = cfg.paths.outputDir;
+                save(fullfile(outDir, ['results_' runKey '.mat']), 'metrics', 'rocInfo', 'cfg');
             end
 
-            fprintf('Acc: %.2f%% | FR: %.2f%% | FA: %.2f%% | POS="%s" | thr=%.4f\n', ...
-                accuracy, FR, FA, results.PositiveLabel, results.ThresholdUsed);
-            if ~isnan(MacroFR)
-                fprintf('Macro (classes): FR=%.2f%% | FA=%.2f%% | AUC=%.3f\n', MacroFR, MacroFA, MacroAUC);
-            end
-
-            % -------- POP-UP + SAVE ROC (even if evaluateModel didn't) --------
-            try
-                maybe_plot_and_save_roc(rocInfo, tag, outDir);
-            catch ME
-                warning('ROC plotting helper failed for %s: %s', tag, ME.message);
-            end
+            fprintf('Finished: %s\n', runKey);
         end
     end
 end
 
-% 7) Summarize to CSVs/plots (same as before)
-origDir = pwd;
-try
-    if ~isempty(outDir) && exist(outDir,'dir')
-        cd(outDir);
+% ------------------ Final overlay ------------------
+if isfield(cfg,'plots') && isfield(cfg.plots,'overlay') && cfg.plots.overlay.enable && ~isempty(overlayCurves)
+    overlayKey = sprintf('%s__%s__overlay', lower(cfg.dataset.version), lower(string(cfg.model.arch)));
+    overlayKey = regexprep(overlayKey,'[^a-zA-Z0-9_]+','_');
+    try
+        plotOverlayAndSaveROC(overlayCurves, overlayLabels, overlayKey, cfg);
+    catch ME
+        warning('Overlay plotting failed: %s', ME.message);
     end
-    summarizeResults(true, true);   % force plots during summary as well
-catch ME
-    warning('summarizeResults failed: %s', ME.message);
 end
-cd(origDir);
 
-% Re-ensure figure visibility at the end
-set(0,'DefaultFigureVisible','on');
+fprintf('\nDone.\n');
 
 % ============================ helpers ==============================
-function v = getf(s, group, name, defaultV)
+function v = getf(cfg, section, name, defaultV)
     v = defaultV;
-    if isfield(s, group)
-        t = s.(group);
-        if isfield(t, name) && ~isempty(t.(name)), v = t.(name); end
+    if isfield(cfg, section)
+        S = cfg.(section);
+        if isfield(S, name) && ~isempty(S.(name)), v = S.(name); end
     end
 end
 
-function [XTrain, YTrain, XTest, YTest] = buildFeaturesForMode(genderMap, filterGender, useMelFilter, melMode, cfg)
-% Always use the original (pre-Warden) gender-split loader.
-    try
-        [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
-            genderMap, filterGender, useMelFilter, melMode, cfg);
-    catch
-        % Back-compat: older signature without cfg
-        [XTrain, YTrain, XTest, YTest] = loadGenderSplitData( ...
-            genderMap, filterGender, useMelFilter, melMode);
-    end
+function ensureDir(p)
+    if ~exist(p,'dir'), mkdir(p); end
 end
 
-function maybe_plot_and_save_roc(rocInfo, tag, outDir)
-% Pop up and save an ROC if rocInfo has what we need.
-% Accepts either:
-%   - rocInfo.fpr, rocInfo.tpr in fractions (0..1)
-%   - or rocInfo.FPRpercent, rocInfo.TPR (legacy naming)
-    if ~exist(outDir,'dir'), mkdir(outDir); end
-
-    % Try to find vectors to plot
-    fpr = []; tpr = [];
-    if isstruct(rocInfo)
-        if isfield(rocInfo,'fpr') && isfield(rocInfo,'tpr')
-            fpr = rocInfo.fpr(:);  tpr = rocInfo.tpr(:);
-        elseif isfield(rocInfo,'FPRpercent') && isfield(rocInfo,'TPR')
-            fpr = rocInfo.FPRpercent(:)/100;  tpr = rocInfo.TPR(:);
-        end
-    end
-    if isempty(fpr) || isempty(tpr) || numel(fpr) ~= numel(tpr) || numel(fpr) < 2
-        % Nothing usable; silently return.
-        return;
-    end
-
-    % Create a visible ROC figure
-    fig = figure('Visible','on'); grid on; hold on;
-    plot(fpr*100, tpr, 'LineWidth', 2);
-    xlabel('False Positive Rate (%)'); ylabel('True Positive Rate');
-    title(sprintf('ROC — %s', tag), 'Interpreter','none');
-    xlim([0 5]); ylim([0 1]); % common zoom used earlier
-    legend(tag, 'Interpreter','none','Location','SouthEast');
-
-    % Save to disk as well
-    outPng = fullfile(outDir, sprintf('ROC_%s.png', tag));
-    outFig = fullfile(outDir, sprintf('ROC_%s.fig', tag));
-    try, saveas(fig, outPng); catch, end
-    try, savefig(fig, outFig); catch, end
+function runKey = makeRunKey(cfg, arch, tag, B, W)
+    ds = lower(string(cfg.dataset.version));
+    arch = lower(string(arch));
+    tag = lower(string(tag));
+    runKey = sprintf('%s__%s__%s__%dx%d', ds, arch, tag, B, W);
+    runKey = regexprep(runKey,'[^a-zA-Z0-9_]+','_');
 end
 % ===================================================================
