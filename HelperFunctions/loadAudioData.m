@@ -1,14 +1,32 @@
-function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudioData()
-    % Load dataset path from config
-    cfg = kws_config();
-    dataPath = cfg.paths.datasetRoot;
+function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudioData(cfg)
+% loadAudioData
+% Loads Google Speech Commands using official testing_list.txt/validation_list.txt.
+% Uses cfg.dataset.version to choose cfg.paths.datasetRootV1 or cfg.paths.datasetRootV2.
+%
+% Outputs:
+%   trainingFiles, trainingLabels, testingFiles, testingLabels
 
-    % Check if data exists
+    if nargin < 1 || isempty(cfg)
+        cfg = kws_config();
+    end
+
+    % Resolve dataset root
+    v = 'v2';
+    if isfield(cfg,'dataset') && isfield(cfg.dataset,'version') && ~isempty(cfg.dataset.version)
+        v = lower(string(cfg.dataset.version));
+    end
+
+    switch v
+        case "v1"
+            dataPath = cfg.paths.datasetRootV1;
+        otherwise
+            dataPath = cfg.paths.datasetRootV2;
+    end
+
     if ~exist(dataPath, 'dir')
         error('Dataset folder not found: %s', dataPath);
     end
 
-    % Load testing and validation file lists
     testingListPath    = fullfile(dataPath, 'testing_list.txt');
     validationListPath = fullfile(dataPath, 'validation_list.txt');
 
@@ -22,45 +40,43 @@ function [trainingFiles, trainingLabels, testingFiles, testingLabels] = loadAudi
     testingList    = readLines(testingListPath);
     validationList = readLines(validationListPath);
 
-    % Get all .wav files (recursively)
+    % All wav files
     audioFilesStruct = dir(fullfile(dataPath, '**', '*.wav'));
     audioFiles = fullfile({audioFilesStruct.folder}, {audioFilesStruct.name})';
+    if isempty(audioFiles)
+        error('No .wav files found under: %s', dataPath);
+    end
 
-    % Extract labels
+    % Extract labels from parent folder
     numFiles     = numel(audioFiles);
     labels       = cell(numFiles, 1);
     isTesting    = false(numFiles, 1);
     isValidation = false(numFiles, 1);
 
     dprefix = [dataPath, filesep];
+
     for i = 1:numFiles
         [folder, ~, ~] = fileparts(audioFiles{i});
         [~, label] = fileparts(folder);
         labels{i} = label;
 
-        % Dataset-relative path (Google Speech Commands Kaggle V2 8/15) using forward slashes 
-        relativePath = strrep(audioFiles{i}, dprefix, '');
-        relativePath = strrep(relativePath, '\', '/');
+        rel = strrep(audioFiles{i}, dprefix, '');
+        rel = strrep(rel, '\', '/'); % lists use forward slashes
 
-        isTesting(i)    = ismember(relativePath, testingList);
-        isValidation(i) = ismember(relativePath, validationList);
+        isTesting(i)    = ismember(rel, testingList);
+        isValidation(i) = ismember(rel, validationList);
     end
 
-    % Convert labels to categorical
     labels = categorical(labels);
 
-    % Split into sets
-    trainingMask   = ~isTesting & ~isValidation;
-    trainingFiles  = audioFiles(trainingMask);
-    testingFiles   = audioFiles(isTesting);
-    validationFiles = audioFiles(isValidation); %#ok<NASGU>
+    trainingMask    = ~isTesting & ~isValidation;
+    testingMask     = isTesting;
 
-    trainingLabels = labels(trainingMask);
-    testingLabels  = labels(isTesting);
+    trainingFiles   = audioFiles(trainingMask);
+    testingFiles    = audioFiles(testingMask);
 
-    disp(['Training files: ', num2str(numel(trainingFiles))]);
-    disp(['Testing files: ',  num2str(numel(testingFiles))]);
-    disp(['Validation files: ', num2str(numel(find(isValidation)))]);
+    trainingLabels  = labels(trainingMask);
+    testingLabels   = labels(testingMask);
 
 end
 

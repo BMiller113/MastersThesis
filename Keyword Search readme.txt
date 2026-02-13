@@ -1,123 +1,147 @@
-Keyword Search readme --Last Updated 8/25/2025
+Keyword Spotting Thesis - Last Updated 2/12
+
+This repository contains MATLAB code for running reproducible keyword
+spotting experiments on the Google Speech Commands dataset
+(Versions 1 and 2).
+
+The goal of this project is to compare lightweight CNN architectures
+under various preprocessing and evaluation conditions,
+and to report detection performance using ROC/AUC metrics alongside
+classification accuracy and computational cost.
 
 
-**A) Requirements: 
-MATLAB R2024b
-Toolboxes: Deep Learning, Audio, Signal Processing, Statistics and Machine Learning Toolbox
+1) Project Overview
 
-Dataset:
-Google Speech Commands V2
-Dataset folder must contain:
-testing_list.txt, validation_list.txt, class subfolders with .wav files
+For a given dataset (V1 or V2) and configuration (architecture + feature
+shape), the system:
 
-	Example:
-	<DATASET_ROOT>/
-  		testing_list.txt
-  		validation_list.txt
-  		bed/xyz.wav
-  		yes/xyz.wav
-  		...
-
-**B) Quick Start:
-1) Open kws_config and set paths, UI runtime toggles, choose experiments, and model/training
-2) Build gender map (one time). This runs a pitch based heuristic on at least one file per speaker to label male/female
-
-	datasetRoot = kws_config().paths.datasetRoot;
-	genderMap = build_speaker_gender_map(datasetRoot);
-	save('speakerGenderMap.mat','genderMap');
-
-3) Run main
-	Data is loaded and filtered per experiment
-	Features are extracted (mel or linear, depending on mode)
-	CNN is training with a stratified holdout split
-	Model is evaluated
-	Results are saved to cfg.paths.outputDIR
-	Finally, summarizeResults(true, true) writes a consolidated results_summary.csv and pops up ROC and Bar charts
-
-**C) Metrics:
-1) Accuracy: overall multiclass accuracy (%)
-2) AUC: aread under ROC for chosed positve class, threshold-independent
-3) Thr: the score cutoff used, by default EER.
-    Specific thoughts on threshold: ROC/AUC scan a full range away
-    Printed FR and FA percentages do depend on threshold
-4) FR (%): among true positives, percent that system misses Thr
-5) FA (%): among negatives, percent system fires on at Thr
-6) Support: count of examples used in a given metric 
-
-**D) Troubleshooting:
-Dataset not found: check cfg.paths.datasetRoot
-Gender map missing: run the onetime builder, if error persists, ensure main is being run where the 				    speakerGenderMap.mat is visible to it
-Too many warnings during extraction: set cfg.runtime.suppressWarnings = true
-Class mismatch errors: ensure you're using latest evaluateModel.m. Matlab can cache an older version, to clear run:
-
-	clear evaluateModel; rehash toolboxcache
-	which -all evaluateModel                    
-
-**E) Notes on frontend modes:
-default / narrow / wide – fixed 40 Mel bands (by default).
-
-prop7k / prop8k – extend the upper frequency to ~7–8 kHz and increase the number of Mel bands proportionally.
-
-linear – linearly spaced triangular filter bank (female-only toggle). Good to test claims about linear vs Mel for female voices.
+1.  Loads audio files from the Speech Commands dataset.
+2.  Extracts log-mel spectrogram features into a fixed-size tensor:
+    [freqBins × timeFrames × 1 × N]
+3.  Trains a lightweight CNN classifier.
+4.  Evaluates the trained model on a held-out test split.
+5.  Exports:
+    -   Model file (.mat)
+    -   Metrics (.mat and .csv)
+    -   ROC plots (.fig and .png)
+    -   Overlay ROC comparisons
 
 
+2) Required Toolboxes
 
------ Sainath Recreation -----
-Window level evaluation pieplien for keyword spotting, modeled after the Sainath 14-keyword setup. Goal to take trained models, run them over sythetic streaming audio, and produce FA/hr bs FR curves for clean and noisy conditions
-**A) Files:
-run_sainath_window_eval.m: Entry point. Builds streams (if needed), evaluates every model, and plots the results.
+-   Deep Learning Toolbox (required)
+-   Audio Toolbox (strongly recommended)
 
-make_streams_quick.m: Builds small streaming test sets:
-    clean: 6 streams × 90 s (right now, 11/8)
-    noisy: 6 streams × 90 s (10 dB SNR, light background)
-    Saves to streams_quick/.
-
-evaluate_window_sweep_minimal.m: Given a model and a stream set, runs sliding-window inference, aligns to the stream labels, sweeps thresholds, and writes CSVs to:
-    Results/sainath/clean/curves/
-    Results/sainath/noisy/curves/
-It currently clips FA/h to 2000 for visibility. This is because our quick streams are short (≈9 minutes total), so even a few false alarms are normalized to a large FA/h.
-
-plot_window_curves.m: Simple overlay plotter. Reads all sainath_curve_events_*.csv in a directory and makes an FR vs FA/h figure.
-
-**B) How to:
-1) Prepare / load config
-
-    run_sainath_window_eval calls kws_config('sainath14') to figure out:
-        where models live (cfg.paths.outputDir)
-        feature geometry (25 ms, 10 ms)
-        target keyword list (14 kws)
-
-2) Create test streams (once)
-
-    If streams_quick/streams_quick_clean.mat or streams_quick/streams_quick_noisy.mat is missing, we call make_streams_quick.
-    This uses the test split to build:
-        clean streams (no noise)
-        noisy streams (10 dB, bgGain=0.3)
-    Each stream gets 10 ms decision windows and labels.
-
-3) Evaluate all models
-For every model_*.mat in cfg.paths.outputDir:
-    run clean:
-        evaluate_window_sweep_minimal(modelFile, 'streams_quick_clean.mat', 'clean', [])
-    run noisy:
-        evaluate_window_sweep_minimal(modelFile, 'streams_quick_noisy.mat', 'noisy', [])
-    this writes CSVs like:
-        Results/sainath/clean/curves/sainath_curve_events_mel-only_default.csv
-        Results/sainath/noisy/curves/sainath_curve_events_mel-only_default.csv
-
-    Inside evaluate_window_sweep_minimal:
-        runs slidingWindowScores on each stream WAV
-        takes the max posterior over the 14 kws
-        lines it up with the stream’s winLabels
-        builds a threshold list from the actual scores (plus 0)
-        computes FA/h using decision rate = 360000 / hour (10 ms hop)
-        clips to FA/h ≤ 2000 if there are enough points
-        writes the CSV
-
-4) Plot
-At the end, run_sainath_window_eval calls:
-    plot_window_curves(cleanCurves, 'FR vs FA/h — CLEAN');
-    plot_window_curves(noisyCurves, 'FR vs FA/h — NOISY');
-Both plots show one line per model.
+If melSpectrogram is unavailable, fallback logic may be used, but Audio
+Toolbox is strongly recommended for consistent reproduction.
 
 
+3) Dataset Requirements
+
+Expected folder structure:
+
+Kaggle_GoogleSpeechCommandsV2/ yes/.wav no/.wav … background_noise/*.wav
+testing_list.txt validation_list.txt
+
+The same structure applies to V1.
+
+The dataset folder name must match exactly what is specified
+in kws_config.m.
+
+
+4) Configuration (kws_config)
+
+All experiment settings are centralized in kws_config.m.
+
+Key settings:
+
+Dataset Paths: cfg.paths.datasetRootV2, cfg.paths.datasetRootV1,
+cfg.paths.outputDir
+
+Feature Geometry: cfg.features.baseBands (e.g., 40, 80),
+cfg.features.targetFrames (e.g., 32 or 98), cfg.features.frameMs,
+cfg.features.hopMs
+
+Architecture: cfg.model.arch ‘trad-fpool3’, ‘tpool2’, ‘one-fstride4’
+
+Plotting Controls: cfg.runtime.makePlots, cfg.runtime.figureVisibility
+
+
+5) Running the Project
+
+Step 1: Verify dataset paths/desired configs in kws_config.m
+
+Step 2: Open MATLAB in project root
+
+Step 3: Add project to path addpath(genpath(pwd)); savepath;
+
+Step 4: Run main.m
+
+Results will be written to: 
+Results/ models/ 
+Results/metrics/ 
+Results/ROC/overlay/
+
+
+6) Key Terminology
+Keyword Spotting (KWS): Small-footprint neural networks that detect
+short spoken keywords.
+
+Log-Mel Spectrogram: 2D representation of audio with frequency bins
+(vertical) and time frames (horizontal).
+
+freqBins: Number of mel frequency bands.
+
+timeFrames: Number of time steps fed into CNN.
+
+MACs: Multiply-accumulate operations for CNN forward pass only.
+
+Params: Total learnable parameters (weights + biases).
+
+ROC Curve: True Positive Rate vs False Positive Rate across thresholds.
+
+AUC: Area Under ROC Curve (1.0 = perfect separation).
+
+
+7) Output Artifacts
+
+models/model_.mat
+
+metrics/metrics_.mat metrics_.csv
+
+ROC/ROC_.fig ROC_.png
+
+ROC/overlay/ROC_OVERLAY__.fig
+
+
+8) Interpreting Results
+
+Top-1 Accuracy: Classification sanity check metric, indicated the model is
+learning meaningful patterns.
+
+ROC/AUC: Primary detection metric for keyword spotting, low false alram rate
+indicating good performance.
+
+MACs: Computational cost of CNN forward pass, useful for cost estimation 
+(does not include preprocessing in calculation).
+
+Params: Model size indicator (weights + biases), total nummber of learnable
+parameters.
+
+
+() Troubleshooting
+
+Dataset folder not found: Check datasetRoot paths.
+
+Incorrect input size error: Model was trained on different feature
+geometry.
+
+ROC not generating: Verify plotting flags in config.
+
+
+10) Quick Workflow
+
+1.  Run selected architectures.
+2.  Inspect metrics CSV.
+3.  Compare ROC overlays.
+4.  Choose based on ROC, MACs, and accuracy sanity.

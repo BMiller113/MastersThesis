@@ -5,7 +5,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
 % with 'Window' (no deprecated 'WindowLength') (this was a big issue)
 % and falls back to STFT+AFB (again, big issue).
 %
-% Version: 8/15
+% Version: 2/12
 % Inputs:
 %   audioFiles : cellstr / string / char of .wav paths
 %   genderType : 'male' | 'female' | 'all'      (optional; default 'all')
@@ -42,7 +42,7 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
     frameDurSec = frameMs/1000;
     hopDurSec   = hopMs/1000;
 
-    % -------- Normalize input list --------
+    % Normalize input list
     if ischar(audioFiles) || isstring(audioFiles)
         audioFiles = cellstr(audioFiles);
     end
@@ -107,7 +107,6 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
                     logMel = log10(M + eps);
                     success = true;
                 catch
-                    % A2: older signature (no FrequencyRange)
                     try
                         M = melSpectrogram(audioIn, fs, ...
                             'Window', win, ...
@@ -261,7 +260,7 @@ function [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMo
             ratio    = diff(fr) / diff(baseRange);
             numBands = roundTo8(baseBands * ratio, 24, 200);
 
-        % ---- NEW: Linear frequency filter bank (uniform spacing) ----
+        % Linear frequency filter bank (uniform spacing)
         case 'linear'
             isLinear = true;
             if strcmpi(genderType,'female')

@@ -12,7 +12,7 @@ cfg.paths.projectRoot = fileparts(thisFile);
 cfg.paths.datasetRootV2   = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_GoogleSpeechCommandsV2';
 cfg.paths.datasetRootV1   = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_GoogleSpeechCommandsV1';
 
-cfg.dataset.version       = 'v2';      % 'v1' or 'v2'
+cfg.dataset.version       = 'v1';      % 'v1' or 'v2'
 cfg.dataset.combineV1V2   = false;
 
 % -------- Output paths --------
@@ -34,22 +34,22 @@ cfg.runtime.suppressTrainingVerbose  = true;
 cfg.experiments.includeModes = {'none', 'mel-only'};    % pooled-only
 cfg.experiments.gendersToRun = {'all'};                 % pooled-only
 cfg.experiments.melModes     = {'default','narrow','wide','prop7k','prop8k'};
-cfg.experiments.enableLinearForFemale = false;
+cfg.experiments.enableLinearForFemale = false; % legacy, probably don't touch
 
 % Force a target class or threshold (leave [] for data-driven)
 cfg.experiments.forcePosLabel  = [];
 cfg.experiments.fixedThreshold = [];
 
 % -------- Features --------
-cfg.features.baseBands       = 40; %40 or 80
-cfg.features.targetFrames    = 98; %32 or 98
+cfg.features.baseBands       = 80; %40 or 80
+cfg.features.targetFrames    = 32; %32 or 98
 cfg.features.frameMs         = 30;
 cfg.features.hopMs           = 10;
 cfg.features.timeCrop        = 'center';
 cfg.features.forceSampleRate = 16000;
 
 % -------- Model --------
-cfg.model.arch = 'trad-fpool3';   % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
+cfg.model.arch = 'one-fstride4';   % 'tpool2' | 'one-fstride4' | 'trad-fpool3'
 
 % -------- Training --------
 cfg.train.epochs       = 50;
