@@ -23,12 +23,21 @@ initLR      = getfielddef(cfg,'train','initLR',1e-3);
 weightDecay = getfielddef(cfg,'train','weightDecay',1e-3);
 
 numTrain = sum(~valIdx);
+% Compute iterations per epoch so validation prints once per epoch by default
+itersPerEpoch = max(1, floor(numTrain / batchSize));
+if isempty(valFreqUser)
+    valFreq = itersPerEpoch;   % one printout per epoch
+else
+    valFreq = valFreqUser;     % manual override from cfg still works
+end
+%{
+numTrain = sum(~valIdx);
 if isempty(valFreqUser)
     valFreq = max(200, floor(numTrain / batchSize));
 else
     valFreq = valFreqUser;
 end
-
+%}
 % ---- Checkpointing ----
 useCkpt = isfield(cfg.train,'enableCheckpointing') && cfg.train.enableCheckpointing;
 resume  = isfield(cfg.train,'resumeFromCheckpoint') && cfg.train.resumeFromCheckpoint;
@@ -36,8 +45,8 @@ ckptDir = cfg.paths.checkpointDir;
 
 if useCkpt && ~exist(ckptDir,'dir'), mkdir(ckptDir); end
 
-options = trainingOptions('adam', ...
-    'ExecutionEnvironment', 'gpu', ...
+options = trainingOptions('adam', ...    %'ExecutionEnvironment', 'gpu', ... Dali
+    'ExecutionEnvironment', cfg.train.executionEnv, ... % Use the detected environment, Dali
     'MaxEpochs',            epochs, ...
     'MiniBatchSize',        batchSize, ...
     'ValidationData',       {XTrain(:,:,:,valIdx), YTrain(valIdx)}, ...

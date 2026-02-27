@@ -1,7 +1,8 @@
 function cfg = kws_config(profile)
 % kws_config: Central config for Keyword Spotting thesis experiments
 
-
+% profile = 'default' is changed to 'fast' just for functional check; change it back once code runs correctly 
+%if nargin < 1, profile = 'fast'; end
 if nargin < 1, profile = 'default'; end
 
 % -------- Project root --------
@@ -10,18 +11,40 @@ cfg.paths.projectRoot = fileparts(thisFile);
 
 % -------- Dataset roots --------
 cfg.paths.datasetRootV2   = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_GoogleSpeechCommandsV2';
-cfg.paths.datasetRootV1   = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_GoogleSpeechCommandsV1';
+%cfg.paths.datasetRootV2   = 'C:\temp\Kaggle_GoogleSpeechCommandsV2'; %Dali
 
-cfg.dataset.version       = 'v1';      % 'v1' or 'v2'
+cfg.paths.datasetRootV1   = 'C:\Users\bjren\MATLAB\Projects\KeywordSpottingThesis\Data\Kaggle_GoogleSpeechCommandsV1';
+%cfg.paths.datasetRootV1   = 'C:\Temp\Kaggle_GoogleSpeechCommandsV1'; %Dali
+
+
+cfg.dataset.version       = 'v2';      % 'v1' or 'v2'
 cfg.dataset.combineV1V2   = false;
 
 % -------- Output paths --------
-cfg.paths.outputDir       = fullfile(cfg.paths.projectRoot, 'Results');
-cfg.paths.cacheDir        = fullfile(cfg.paths.outputDir, 'cache');
-cfg.paths.modelDir        = fullfile(cfg.paths.outputDir, 'models');
+
+    %cfg.paths.outputDir = 'C:\temp\Results'; %Dali
+    cfg.paths.outputDir       = fullfile(cfg.paths.projectRoot, 'Results');
+
+    % The rest of your paths will automatically follow this root
+    cfg.paths.cacheDir        = fullfile(cfg.paths.outputDir, 'cache'); %Dali
+    cfg.paths.modelDir        = fullfile(cfg.paths.outputDir, 'models'); %Dali
+
+%cfg.paths.outputDir       = fullfile(cfg.paths.projectRoot, 'Results');
+%cfg.paths.cacheDir        = fullfile(cfg.paths.outputDir, 'cache'); Dali
+%cfg.paths.modelDir        = fullfile(cfg.paths.outputDir, 'models'); Dali
 cfg.paths.metricsDir      = fullfile(cfg.paths.outputDir, 'metrics');
 cfg.paths.checkpointDir   = fullfile(cfg.paths.outputDir, 'checkpoints');
 
+% -------- Hardware Detection -------- added Dali
+try
+    if gpuDeviceCount > 0
+        cfg.train.executionEnv = 'gpu'; % Use GPU if available
+    else
+        cfg.train.executionEnv = 'cpu'; % Fallback to CPU
+    end
+catch
+    cfg.train.executionEnv = 'cpu';
+end
 % -------- Runtime/UI --------
 cfg.runtime.makePlots                = false;
 cfg.runtime.figureVisibility         = 'off';
@@ -41,8 +64,8 @@ cfg.experiments.forcePosLabel  = [];
 cfg.experiments.fixedThreshold = [];
 
 % -------- Features --------
-cfg.features.baseBands       = 80; %40 or 80
-cfg.features.targetFrames    = 32; %32 or 98
+cfg.features.baseBands       = 40; %40 or 80
+cfg.features.targetFrames    = 98; %32 or 98
 cfg.features.frameMs         = 30;
 cfg.features.hopMs           = 10;
 cfg.features.timeCrop        = 'center';
@@ -58,7 +81,7 @@ cfg.train.valFrac      = 0.20;
 cfg.train.initLR       = 1e-3;
 cfg.train.weightDecay  = 1e-3;
 cfg.train.seed         = 42;
-cfg.train.valFreq      = 30;
+cfg.train.valFreq      = []; % change from 30; [] = auto (one printout per epoch)
 
 cfg.train.enableCheckpointing   = true;
 cfg.train.checkpointFrequency   = 200;
@@ -96,12 +119,13 @@ cfg.plots.overlay.xlimPercent   = [0 5];
 % -------- Profiles --------
 switch lower(profile)
     case 'fast'
-        cfg.experiments.includeModes = {'none','mel-only'};
+        cfg.features.baseBands       = 40; % added for fast execution; Dali
+        cfg.experiments.includeModes = {'none'}; % from: {'none','mel-only'};
         cfg.experiments.gendersToRun = {'all'};
-        cfg.experiments.melModes     = {'default','prop7k'};
-        cfg.train.epochs    = 10;
+        cfg.experiments.melModes     = {'default'}; % changed from {'default','prop7k'}; Dali
+        cfg.train.epochs    = 25;% added to reduce running time
         cfg.train.batchSize = 256;
-
+        cfg.runtime.suppressTrainingVerbose = false;  % added to track progress; Dali
     case 'long1s'
         cfg.features.baseBands     = 40;
         cfg.features.frameMs       = 25;

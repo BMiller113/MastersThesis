@@ -49,7 +49,8 @@
 
 clear; clc;
 
-cfg = kws_config();
+cfg = kws_config(); %change to fast for initial run
+%cfg = kws_config('fast'); % could be ('fast'), ('default'), ('long1s')
 
 % UI control: disable popups
 
@@ -146,23 +147,51 @@ for g = 1:numel(genderModes)
             continue;
         end
         fprintf('[%s] Train=%d Test=%d\n', upper(dsTag), numel(trainFiles), numel(testFiles));
-
-        % Feature extraction
-        % Features are 4-D: [freqBins x timeFrames x 1 x N]
-        % vTr/vTe indicate files that were successfully processed.
         tFeat = tic;
-        if useMelFilter
-            [XTrain, vTr] = extractFeatures(trainFiles,'all',char(melMode),cfg);
-            [XTest,  vTe] = extractFeatures(testFiles, 'all',char(melMode),cfg);
+
+        activeMelMode = char(melMode);
+        cacheKeyTr = sprintf('feat_%s_train_%s_b%d_w%d.mat', ...
+            dsTag, activeMelMode, ...
+            getf(cfg,'features','baseBands',40), ...
+            getf(cfg,'features','targetFrames',32));
+        cacheKeyTe = sprintf('feat_%s_test_%s_b%d_w%d.mat', ...
+            dsTag, activeMelMode, ...
+            getf(cfg,'features','baseBands',40), ...
+            getf(cfg,'features','targetFrames',32));
+        cacheTrPath = fullfile(cfg.paths.cacheDir, cacheKeyTr);
+        cacheTePath = fullfile(cfg.paths.cacheDir, cacheKeyTe);
+
+        useCache = isfield(cfg,'cache') && isfield(cfg.cache,'enableFeatureCache') ...
+                   && cfg.cache.enableFeatureCache;
+
+        if useCache && isfile(cacheTrPath) && isfile(cacheTePath)
+            fprintf('Loading cached features: %s\n', cacheKeyTr);
+            tmp = load(cacheTrPath, 'X', 'v', 'labels');
+            XTrain = tmp.X; vTr = tmp.v; trainLabels = tmp.labels;
+            tmp = load(cacheTePath, 'X', 'v', 'labels');
+            XTest  = tmp.X; vTe = tmp.v; testLabels  = tmp.labels;
         else
-            [XTrain, vTr] = extractFeatures(trainFiles,'all','default',cfg);
-            [XTest,  vTe] = extractFeatures(testFiles, 'all','default',cfg);
+            if useMelFilter
+                [XTrain, vTr] = extractFeatures(trainFiles,'all',activeMelMode,cfg);
+                [XTest,  vTe] = extractFeatures(testFiles, 'all',activeMelMode,cfg);
+            else
+                [XTrain, vTr] = extractFeatures(trainFiles,'all','default',cfg);
+                [XTest,  vTe] = extractFeatures(testFiles, 'all','default',cfg);
+            end
+            if useCache
+                X = XTrain; v = vTr; labels = trainLabels;
+                save(cacheTrPath, 'X', 'v', 'labels', '-v7.3');
+                X = XTest;  v = vTe; labels = testLabels;
+                save(cacheTePath, 'X', 'v', 'labels', '-v7.3');
+                fprintf('Features cached to: %s\n', cfg.paths.cacheDir);
+            end
         end
+
         YTrain = trainLabels(vTr);
         YTest  = testLabels(vTe);
 
         fprintf('Features built in %.1f s\n', toc(tFeat));
-
+        % end of new caching block
         % After filtering invalid files, ensure there are still have multiple classes.
         if numel(categories(YTrain)) < 2 || numel(categories(YTest)) < 2
             warning('Not enough classes after filtering; skipping this condition.');
@@ -187,11 +216,14 @@ for g = 1:numel(genderModes)
         layers = defineCNNArchitecture(numel(categories(YTrain)), char(ARCH), B_actual, W_actual);
 
         % trainCNN handles GPU, holdout, and core training options.
+        tTrain = tic; % to track time, Dali
         net = trainCNN(XTrain, YTrain, layers, cfg);
-        fprintf('Training complete.\n');
+        fprintf('Training complete. (%.1f min)\n', toc(tTrain)/60); % output training time
+        %fprintf('Training complete.\n');
 
         % Evaluate (no plotting)
         fprintf('Evaluating...\n');
+        tEval = tic; % to track time
         makePlots = false;
         [Top1Acc, FR, FA, rocInfo] = callEvaluateModelRobust(net, XTest, YTest, makePlots, cfg);
 
@@ -232,7 +264,7 @@ for g = 1:numel(genderModes)
         % Exports a per-class precision/recall/F1 table for diagnostics.
         YPred = classify(net, XTest);
         prfTbl = perClassPRF1(YTestAligned, YPred);
-
+        fprintf('Evaluation complete. (%.1f min)\n', toc(tEval)/60); % track time usage, Dali
         % Tag naming
         % Keep the legacy tag schema to preserve compatibility with older
         % results folders and spreadsheets.
@@ -737,4 +769,9 @@ function [Hout, Wout] = outSize2D(H, W, kH, kW, sH, sW, pad, padMode)
 
     Hout = max(1, Hout);
     Wout = max(1, Wout);
+end
+
+% to track time stamp; Dali
+function s = timestamp()
+    s = datestr(now, 'HH:MM:SS');
 end

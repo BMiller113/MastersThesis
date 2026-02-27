@@ -52,7 +52,10 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
     features = [];                 % allocated on first success (locks numBands)
     validIdx = true(1, numFiles);  % per-file success mask
 
-    for i = 1:numFiles
+    [~, numBands, ~] = chooseMelConfig(16000, genderType, melMode, baseBands);
+    features = zeros(numBands, targetFrames, 1, numFiles, 'single');
+
+    parfor i = 1:numFiles           % parfor does not work with nested function ensureAlloc, Dali
         try
             % Read & precondition
             [audioIn, fs] = tryRead(audioFiles{i});   % robust read
@@ -71,9 +74,6 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
 
             % Mel/Filterbank configuration
             [freqRange, numBands, isLinear] = chooseMelConfig(fs, genderType, melMode, baseBands);
-
-            % Allocate on first success (locks band count within this batch)
-            ensureAlloc();
 
             % Front-end: melSpectrogram or custom linear bank
             win = localWindow(frameLength); % hamming with 'periodic' when available
@@ -193,7 +193,9 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
         catch ME
             % Per-file warning (kept compact)
             warning('extractFeatures:filefail %s | %s', audioFiles{i}, ME.message);
-            ensureAlloc();                        % make sure 'features' exists
+            % next line is removedd; features is guaranteed to exist before
+            % the loop starts; Dali
+            %ensureAlloc();                        % make sure 'features' exists
             features(:, :, 1, i) = 0;             % zero-fill failed item
             validIdx(i) = false;
         end
@@ -203,16 +205,6 @@ function [features, validIdx] = extractFeatures(audioFiles, genderType, melMode,
     mu = mean(features(:));
     sd = std(features(:)) + eps;
     features = (features - mu) / sd;
-
-    % Nested helper
-    function ensureAlloc()
-        if isempty(features)
-            features = zeros(numBands, targetFrames, 1, numFiles, 'single');
-        elseif size(features,1) ~= numBands
-            error('mixedNumBands: %d (existing) vs %d (this file). Keep melMode constant within a run.', ...
-                  size(features,1), numBands);
-        end
-    end
 end
 
 % Helper: pick range & bands 

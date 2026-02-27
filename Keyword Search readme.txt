@@ -73,6 +73,7 @@ Step 1: Verify dataset paths/desired configs in kws_config.m
 
 Step 2: Open MATLAB in project root
 
+% suggested edit for step 3: replace savepath with savepath(fullfile(userpath,'pathdef.m')), as savepath doesn't work for school installed computer (it needs to access installation directory)
 Step 3: Add project to path addpath(genpath(pwd)); savepath;
 
 Step 4: Run main.m
